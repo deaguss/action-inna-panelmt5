@@ -6,6 +6,21 @@ All notable changes to ActionInna are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Changing open trades with a confirm pop-up. ActionInna draws its own lines for every position and
+  pending order on the chart's symbol, in place of MT5's own trade lines, which can change an order the
+  moment a drag ends. Dragging SL, TP or a pending order's entry opens a modify card with the new
+  prices, the money and % at each level, and the risk : reward. Nothing is sent until Confirm. Cancel
+  or Esc puts the lines back.
+- A pending order's SL and TP move with its entry. A position's stop may go to break-even or past it.
+  The card checks stops and freeze levels and the required SL/TP. The safety cap blocks a change only
+  when the risk goes up.
+- Input "Drag open trades with a confirm pop-up" (on by default). MT5's own trade lines come back when
+  it is off or the EA is removed.
+- Tests: worked examples and a generated suite that checks changes to open trades against a
+  whole-point reference.
+
 ## [1.0.0] - 2026-10-21
 
 First public version (EA version 1.00). Release notes: [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).

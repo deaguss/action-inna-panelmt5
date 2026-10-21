@@ -13,7 +13,9 @@ moving chart: it should be calm, predictable and still.
 | Area | Decision | Reason |
 |---|---|---|
 | Layout | One column: side, risk, SL/TP, money, confirm | The order in which a trade is decided, top to bottom |
-| Focal point | The SELL/BUY pair when idle, CONFIRM during a preview | One question per moment: which side, then go or not |
+| Focal point | The SELL/BUY pair when idle, CONFIRM during a preview, the card's Confirm while a change is open | One question per moment: which side, then go or not |
+| Changing open trades | A drag only moves the line; a card beside the panel, level with the dropped line, holds the change until Confirm | A drag is easy to make by accident; a change to a live trade should take a second, deliberate press |
+| Card colours | Confirm in the trade's side colour, Cancel neutral, the server's old level as a muted dotted line | Same reading as CONFIRM, and the old and new levels can be told apart at a glance |
 | Placement | Docked at the chart's right edge, chart shifted to make room | Keeps the latest candles visible, like a sidebar |
 | Slim layout | SELL / risk / BUY bar, chosen or forced by a short chart | CONFIRM must stay on screen on tiled charts |
 | Colour: sides | Blue = BUY, red = SELL, and nothing else | The convention traders already read at a glance |

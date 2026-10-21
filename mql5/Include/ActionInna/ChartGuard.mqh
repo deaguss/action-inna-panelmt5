@@ -19,12 +19,15 @@ private:
    bool              m_mouseScroll;
    bool              m_shift;
    double            m_shiftSize;
+   bool              m_tradeLevels;
+   bool              m_dragLevels;
    bool              m_scrollLocked;
    bool              m_shifted;
 
 public:
                      CAiChartGuard() : m_captured(false), m_oneClick(false), m_quickNav(true), m_mouseMove(false),
-                     m_mouseScroll(true), m_shift(false), m_shiftSize(10.0), m_scrollLocked(false), m_shifted(false) {}
+                     m_mouseScroll(true), m_shift(false), m_shiftSize(10.0), m_tradeLevels(true), m_dragLevels(true),
+                     m_scrollLocked(false), m_shifted(false) {}
 
    void              Capture()
      {
@@ -36,15 +39,21 @@ public:
       m_mouseScroll = (ChartGetInteger(0, CHART_MOUSE_SCROLL) != 0);
       m_shift = (ChartGetInteger(0, CHART_SHIFT) != 0);
       m_shiftSize = ChartGetDouble(0, CHART_SHIFT_SIZE);
+      m_tradeLevels = (ChartGetInteger(0, CHART_SHOW_TRADE_LEVELS) != 0);
+      m_dragLevels = (ChartGetInteger(0, CHART_DRAG_TRADE_LEVELS) != 0);
       m_captured = true;
      }
 
    // Hides MT5's One-Click panel and keeps Enter/Space for the hotkeys instead of quick navigation.
-   void              Apply(const bool hideOneClick, const bool hotkeys)
+   // manageOrders swaps MT5's own trade lines, which can change an order the moment a drag ends,
+   // for the panel's lines, whose drags only open the confirm card.
+   void              Apply(const bool hideOneClick, const bool hotkeys, const bool manageOrders)
      {
       ChartSetInteger(0, CHART_SHOW_ONE_CLICK, hideOneClick ? false : m_oneClick);
       ChartSetInteger(0, CHART_QUICK_NAVIGATION, hotkeys ? false : m_quickNav);
       ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true);
+      ChartSetInteger(0, CHART_SHOW_TRADE_LEVELS, manageOrders ? false : m_tradeLevels);
+      ChartSetInteger(0, CHART_DRAG_TRADE_LEVELS, manageOrders ? false : m_dragLevels);
      }
 
    // Empty space right of the last bar for the docked panel, or the trader's own setting back.
@@ -85,6 +94,8 @@ public:
       ChartSetInteger(0, CHART_MOUSE_SCROLL, m_mouseScroll);
       ChartSetInteger(0, CHART_SHIFT, m_shift);
       ChartSetDouble(0, CHART_SHIFT_SIZE, m_shiftSize);
+      ChartSetInteger(0, CHART_SHOW_TRADE_LEVELS, m_tradeLevels);
+      ChartSetInteger(0, CHART_DRAG_TRADE_LEVELS, m_dragLevels);
       m_scrollLocked = false;
       m_shifted = false;
       if(!keepCapture)

@@ -53,6 +53,31 @@ struct AiView
    string            editing;         // edit field the trader is typing in
    bool              refreshEdits;    // values changed outside the edit fields
    int               focusCmd;        // control with keyboard focus (ENUM_AI_CMD), AI_CMD_NONE = none
+
+   // The modify card: a change to an open trade, waiting for Confirm.
+   bool              modOpen;
+   int               modSide;
+   int               modY;            // height of the line that was dropped, the card's centre
+   string            modTitle;
+   string            modTicket;
+   bool              modEntryEdit;    // pending order: the entry can be typed
+   string            modEntryText;
+   string            modEntryWas;
+   string            modEntryMoney;
+   int               modEntryTone;    // -1 loss, 1 gain, 0 neither
+   string            modSlText;
+   string            modSlWas;
+   string            modSlMoney;
+   int               modSlTone;
+   string            modTpText;
+   string            modTpWas;
+   string            modTpMoney;
+   int               modTpTone;
+   string            modRR;
+   string            modStatus;
+   int               modStatusLevel;  // 0 info, 1 warning, 2 error
+   string            modConfirmText;
+   bool              modConfirmEnabled;
   };
 
 // Object names are AI_P_<TOKEN>#<part>. Clickable tokens map to commands; tokens starting with X
@@ -67,6 +92,10 @@ private:
    int               m_fw[];
    int               m_fh[];
    int               m_dragRight;     // the header moves the panel left of this x
+   int               m_cardX;         // where the modify card was drawn; m_cardW is 0 while it is closed
+   int               m_cardY;
+   int               m_cardW;
+   int               m_cardH;
 
    void              ClearFocusList()
      {
@@ -230,6 +259,38 @@ private:
       ui.Rect(AI_P + "XFOC#r", fx + fw - th, fy, th, fh, t.text, t.text, 15);
      }
 
+   color             ToneColor(const int tone, const AiTheme &t) const
+     {
+      if(tone < 0)
+         return t.danger;
+      if(tone > 0)
+         return t.good;
+      return t.muted;
+     }
+
+   // One level on the modify card: label and price field, then "was ..." and the money below them.
+   int               CardRow(const string key, const string label, const bool editable, const string text, const string was, const string money,
+                             const int tone, const int cx, const int cy, const int cw, const int lblW, const AiView &v, const AiTheme &t, CAiUi &ui)
+     {
+      int fs = ui.fontSize;
+      int rowH = ui.S(24);
+      ui.Label(AI_P + "XM" + key + "L#t", cx, cy + rowH / 2, label, t.text, fs, ANCHOR_LEFT, false);
+      if(editable)
+         ui.Edit(AI_P + "E_M" + key, cx + lblW, cy, cw - lblW, rowH, text, t.text, t.inputBg, t.inputBorder, v.refreshEdits, v.editing);
+      else
+         ui.Label(AI_P + "XM" + key + "V#t", cx + cw, cy + rowH / 2, text, t.text, fs, ANCHOR_RIGHT, false);
+      int sy = cy + rowH + ui.S(2);
+      ui.Label(AI_P + "XM" + key + "W#t", cx, sy, was, t.muted, fs - 1, ANCHOR_LEFT_UPPER, false);
+      ui.Label(AI_P + "XM" + key + "M#t", cx + cw, sy, money, ToneColor(tone, t), fs - 1, ANCHOR_RIGHT_UPPER, tone != 0);
+      return cy + rowH + ui.S(19);
+     }
+
+   // Matches the steps RenderCard takes, so the card can be placed before it is drawn.
+   int               CardHeight(CAiUi &ui) const
+     {
+      return ui.S(8) + ui.S(24) + ui.S(6) + 3 * (ui.S(24) + ui.S(19)) + 1 + ui.S(6) + ui.S(17) + ui.S(4) + ui.S(34) + ui.S(32) + ui.S(10);
+     }
+
 public:
    int               x;
    int               y;               // where the panel is drawn
@@ -241,7 +302,8 @@ public:
    int               chartW;
    int               chartH;
 
-                     CAiPanel() : m_dragRight(0), x(0), y(0), prefY(0), w(256), h(300), fullH(0), docked(true), chartW(800), chartH(600) {}
+                     CAiPanel() : m_dragRight(0), m_cardX(0), m_cardY(0), m_cardW(0), m_cardH(0), x(0), y(0), prefY(0), w(256), h(300),
+                     fullH(0), docked(true), chartW(800), chartH(600) {}
 
    void              Place(const int cw, const int ch, CAiUi &ui)
      {
@@ -282,6 +344,11 @@ public:
    bool              Contains(const int px, const int py) const
      {
       return (px >= x && px < x + w && py >= y && py < y + h);
+     }
+
+   bool              InCard(const int px, const int py) const
+     {
+      return (m_cardW > 0 && px >= m_cardX && px < m_cardX + m_cardW && py >= m_cardY && py < m_cardY + m_cardH);
      }
 
    // The free part of the header, left of its buttons, moves the panel.
@@ -362,6 +429,10 @@ public:
          return AI_CMD_PIN;
       if(token == "SAVETPL")
          return AI_CMD_TEMPLATE;
+      if(token == "MODOK")
+         return AI_CMD_MOD_CONFIRM;
+      if(token == "MODX")
+         return AI_CMD_MOD_CANCEL;
       return AI_CMD_NONE;
      }
 
@@ -495,6 +566,73 @@ public:
       ui.Rect(AI_P + "XBG#r", x, y, w, h, t.bg, t.border, 10);
       int fi = FocusIndex(v.focusCmd);
       if(fi >= 0)
+         FocusRing(fi, t, ui);
+     }
+
+   // The modify card: beside the panel on the chart's side, level with the line that was dropped.
+   // Drawn after the panel in the same frame; its controls join the end of the Tab order.
+   void              RenderCard(const AiView &v, const AiTheme &t, CAiUi &ui)
+     {
+      m_cardW = 0;
+      m_cardH = 0;
+      if(!v.modOpen)
+         return;
+      int fs = ui.fontSize;
+      int pad = ui.S(10);
+      int gap = ui.S(4);
+      int cw = ui.S(236);
+      int cardW = cw + 2 * pad;
+      int cardH = CardHeight(ui);
+      bool panelRight = (x + w / 2 > chartW / 2);
+      int left = panelRight ? x - cardW - ui.S(8) : x + w + ui.S(8);
+      m_cardX = MathMax(0, MathMin(left, chartW - cardW));
+      m_cardY = MathMax(0, MathMin(v.modY - cardH / 2, chartH - cardH));
+      m_cardW = cardW;
+      m_cardH = cardH;
+      int firstFocus = FocusCount();
+
+      ui.Rect(AI_P + "XMBG#r", m_cardX, m_cardY, cardW, cardH, t.bg, t.border, 10);
+      int cx = m_cardX + pad;
+      int cy = m_cardY + ui.S(8);
+      int hb = ui.S(24);
+      int tw = ui.TextWidth(v.modTicket, fs - 1);
+      ui.Label(AI_P + "XMTKT#t", cx + cw, cy + hb / 2, v.modTicket, t.muted, fs - 1, ANCHOR_RIGHT, false);
+      ui.Label(AI_P + "XMTTL#t", cx, cy + hb / 2, ui.Fit(v.modTitle, cw - tw - 2 * gap, fs, true), t.text, fs, ANCHOR_LEFT, true);
+      cy += hb + ui.S(6);
+
+      int lblW = ui.S(76);
+      cy = CardRow("ENTRY", "Entry", v.modEntryEdit, v.modEntryText, v.modEntryWas, v.modEntryMoney, v.modEntryTone, cx, cy, cw, lblW, v, t, ui);
+      cy = CardRow("SL", "Stop loss", true, v.modSlText, v.modSlWas, v.modSlMoney, v.modSlTone, cx, cy, cw, lblW, v, t, ui);
+      cy = CardRow("TP", "Take profit", true, v.modTpText, v.modTpWas, v.modTpMoney, v.modTpTone, cx, cy, cw, lblW, v, t, ui);
+
+      ui.Rect(AI_P + "XMDIV#r", cx, cy, cw, 1, t.divider, t.divider, 11);
+      cy += 1 + ui.S(6);
+      cy = Readout("MRR", "Risk : reward", v.modRR, t.text, cx, cy, cw, ui.S(17), t, ui, false);
+      cy += ui.S(4);
+
+      color sc = t.muted;
+      if(v.modStatusLevel == 1)
+         sc = t.warn;
+      else if(v.modStatusLevel == 2)
+         sc = t.danger;
+      string l1 = "";
+      string l2 = "";
+      Wrap(v.modStatus, cw, fs - 1, ui, l1, l2);
+      ui.Label(AI_P + "XMST1#t", cx, cy, l1, sc, fs - 1, ANCHOR_LEFT_UPPER, false);
+      ui.Label(AI_P + "XMST2#t", cx, cy + ui.S(15), l2, sc, fs - 1, ANCHOR_LEFT_UPPER, false);
+      cy += ui.S(34);
+
+      int bh = ui.S(32);
+      int cancelW = ui.S(72);
+      int okW = cw - cancelW - gap;
+      color cbg = v.modConfirmEnabled ? ((v.modSide == AI_BUY) ? t.buyFill : t.sellFill) : t.chip;
+      color cbd = v.modConfirmEnabled ? cbg : t.inputBorder;
+      color ctx = v.modConfirmEnabled ? t.onFill : t.muted;
+      Control(AI_CMD_MOD_CONFIRM, AI_P + "MODOK", cx, cy, okW, bh, v.modConfirmText, cbg, cbd, ctx, fs, v.modConfirmEnabled, ui);
+      Control(AI_CMD_MOD_CANCEL, AI_P + "MODX", cx + okW + gap, cy, cancelW, bh, "Cancel", t.chip, t.inputBorder, t.text, fs, false, ui);
+
+      int fi = FocusIndex(v.focusCmd);
+      if(fi >= firstFocus)
          FocusRing(fi, t, ui);
      }
   };

@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //| ActionInnaTests.mq5                                              |
 //| ActionInna's tests: worked examples, then generated scenarios    |
-//| (about 92,000 per round). Drag onto any chart; the last suite    |
+//| (about 102,000 per round). Drag onto any chart; the last suite   |
 //| uses that chart's symbol with live prices and sends no orders.   |
 //+------------------------------------------------------------------+
 #property copyright   "ActionInna, MIT licence"
@@ -12,7 +12,7 @@
 #include "Scenarios.mqh"
 
 input uint InpSeed   = 20261021; // Seed (the same seed replays the same scenarios)
-input int  InpRounds = 1;        // Rounds (one round is about 92,000 scenarios)
+input int  InpRounds = 1;        // Rounds (one round is about 102,000 scenarios)
 
 void TestSteps()
   {
@@ -79,6 +79,82 @@ void TestStops()
    fx.stopsLevel = 0;
    Check(AiCheckStops(fx, ORDER_TYPE_BUY, 1.08500, 1.08479, 0.0, 1.08480, 1.08500) == "", "stops level 0: one point under the bid passes");
    Check(AiCheckStops(fx, ORDER_TYPE_BUY, 1.08500, 1.08490, 0.0, 1.08480, 1.08500) != "", "stops level 0: SL inside the spread fails");
+  }
+
+// Changes to open trades: a position's levels count from the market, a pending order keeps its type.
+void TestModify()
+  {
+   AiSpec fx;
+   ZeroMemory(fx);
+   fx.digits = 5;
+   fx.point = 0.00001;
+   fx.tickSize = 0.00001;
+   fx.stopsLevel = 30;
+   fx.pipSize = 0.0001;
+   fx.pipPoints = 10;
+   fx.tradeMode = SYMBOL_TRADE_MODE_FULL;
+   double bid = 1.08480;
+   double ask = 1.08500;
+
+   AiLive buy;
+   ZeroMemory(buy);
+   buy.ticket = 1;
+   buy.side = AI_BUY;
+   buy.type = ORDER_TYPE_BUY;
+   buy.lots = 0.10;
+   buy.open = 1.08000;
+   buy.sl = 1.07750;
+   buy.tp = 1.08900;
+   Check(AiCheckModify(fx, buy, buy.open, 1.08000, buy.tp, bid, ask) == "", "position: stop moved to break-even passes");
+   Check(AiCheckModify(fx, buy, buy.open, 1.08200, buy.tp, bid, ask) == "", "position: stop past the open price (locks in profit) passes");
+   Check(AiCheckModify(fx, buy, buy.open, 1.08450, buy.tp, bid, ask) == "", "position: SL exactly at the stops level under the bid passes");
+   Check(AiCheckModify(fx, buy, buy.open, 1.08460, buy.tp, bid, ask) != "", "position: SL inside the stops level fails");
+   Check(AiCheckModify(fx, buy, buy.open, 1.08490, buy.tp, bid, ask) != "", "position: SL above the bid fails");
+   Check(AiCheckModify(fx, buy, buy.open, buy.sl, 1.08500, bid, ask) != "", "position: TP inside the stops level fails");
+   Check(AiCheckModify(fx, buy, buy.open, buy.sl, 1.08470, bid, ask) != "", "position: TP below the bid fails");
+
+   AiLive sell = buy;
+   sell.side = AI_SELL;
+   sell.type = ORDER_TYPE_SELL;
+   sell.open = 1.08800;
+   sell.sl = 1.09000;
+   sell.tp = 1.08000;
+   Check(AiCheckModify(fx, sell, sell.open, 1.08530, sell.tp, bid, ask) == "", "sell position: SL exactly at the stops level over the ask passes");
+   Check(AiCheckModify(fx, sell, sell.open, 1.08520, sell.tp, bid, ask) != "", "sell position: SL inside the stops level fails");
+
+   AiLive lim = buy;
+   lim.isOrder = true;
+   lim.type = ORDER_TYPE_BUY_LIMIT;
+   lim.open = 1.08300;
+   lim.sl = 1.08100;
+   lim.tp = 1.08700;
+   Check(AiCheckModify(fx, lim, 1.08200, 1.08000, 1.08600, bid, ask) == "", "buy limit moved lower, SL/TP along, passes");
+   Check(AiCheckModify(fx, lim, 1.08600, 1.08400, 1.09000, bid, ask) != "", "buy limit dragged above the ask fails");
+   Check(AiCheckModify(fx, lim, 1.08490, 1.08290, 1.08890, bid, ask) != "", "buy limit too close to the ask fails");
+   Check(AiCheckModify(fx, lim, 1.08300, 1.08350, 1.08700, bid, ask) != "", "pending SL on the wrong side of the entry fails");
+
+   fx.freezeLevel = 50;
+   AiLive nearTp = buy;
+   nearTp.tp = 1.08510;
+   Check(AiCheckModify(fx, nearTp, nearTp.open, 1.07700, nearTp.tp, bid, ask) != "", "a level inside the freeze level blocks every change");
+   Check(AiCheckModify(fx, buy, buy.open, 1.07700, buy.tp, bid, ask) == "", "levels outside the freeze level can change");
+   AiLive nearOrder = lim;
+   nearOrder.open = 1.08460;
+   Check(AiCheckModify(fx, nearOrder, 1.08300, 1.08100, 1.08700, bid, ask) != "", "a pending order inside the freeze level cannot move");
+   fx.freezeLevel = 0;
+
+   fx.orderFlags = SYMBOL_ORDER_MARKET | SYMBOL_ORDER_LIMIT | SYMBOL_ORDER_STOP | SYMBOL_ORDER_SL;
+   Check(AiCheckModify(fx, buy, buy.open, buy.sl, buy.tp, bid, ask) != "", "a symbol without take profit refuses one");
+   fx.orderFlags = 0;
+   AiLive stopLimit = lim;
+   stopLimit.type = ORDER_TYPE_BUY_STOP_LIMIT;
+   Check(AiCheckModify(fx, stopLimit, stopLimit.open, stopLimit.sl, stopLimit.tp, bid, ask) != "", "stop-limit orders are left to MT5");
+
+   Check(!AiModCapBlocks(5.0, 4.0, 400.0, 300.0, true), "cap: below the cap passes");
+   Check(AiModCapBlocks(5.0, 6.0, 600.0, 300.0, true), "cap: widening a stop above the cap is blocked");
+   Check(!AiModCapBlocks(5.0, 6.0, 600.0, 800.0, true), "cap: tightening a stop that is still above the cap passes");
+   Check(!AiModCapBlocks(5.0, 6.0, 600.0, 0.0, false), "cap: adding a stop where there was none passes");
+   Check(!AiModCapBlocks(0.0, 60.0, 6000.0, 300.0, true), "cap: switched off");
   }
 
 void TestLots()
@@ -187,6 +263,7 @@ void OnStart()
    TestPips();
    TestOrderTypes();
    TestStops();
+   TestModify();
    TestLots();
    TestMemory();
    TestParsing();
@@ -198,6 +275,7 @@ void OnStart()
    SuiteNormPrice(10000 * rounds);
    SuiteResolveType(10000 * rounds);
    SuiteStopsOracle(10000 * rounds);
+   SuiteModifyOracle(10000 * rounds);
    SuiteMemoryRoundTrip(5000 * rounds);
    SuiteMemoryFuzz(5000 * rounds);
    SuiteParseNumber(10000 * rounds);
@@ -216,6 +294,11 @@ void OnStart()
    if(g_report != "")
       text += "\r\nFirst failures:\r\n" + g_report;
    FolderCreate(AI_FILES_DIR, 0);
+   // The alert names the report's full path (or why it could not be written), so a report that
+   // went to another terminal, or nowhere, is visible without opening the Experts tab.
+   string path = TerminalInfoString(TERMINAL_DATA_PATH) + "\\MQL5\\Files\\" + AI_FILES_DIR + "\\test-results.txt";
+   string where = "Report: " + path;
+   ResetLastError();
    int h = FileOpen(AI_FILES_DIR + "\\test-results.txt", FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ);
    if(h != INVALID_HANDLE)
      {
@@ -223,7 +306,8 @@ void OnStart()
       FileClose(h);
      }
    else
-      Print("Could not write test-results.txt, error ", GetLastError());
-   Alert(summary);
+      where = "Could not write the report (error " + IntegerToString(GetLastError()) + "): " + path;
+   Print(where);
+   Alert(summary + " | " + where);
   }
 //+------------------------------------------------------------------+

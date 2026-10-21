@@ -16,6 +16,7 @@
 #define AI_L              "AINNA_L_"
 #define AI_T              "AINNA_T_"
 #define AI_Z              "AINNA_Z_"
+#define AI_O              "AINNA_O_"
 
 // Sides are signed so a level can be written as entry - side * distance.
 #define AI_BUY            1
@@ -109,7 +110,9 @@ enum ENUM_AI_CMD
    AI_CMD_OPT_BASE,
    AI_CMD_PIN,
    AI_CMD_TEMPLATE,
-   AI_CMD_RISK_NEXT
+   AI_CMD_RISK_NEXT,
+   AI_CMD_MOD_CONFIRM,
+   AI_CMD_MOD_CANCEL
   };
 
 // Settings copied from the EA inputs (inputs themselves are read-only).
@@ -131,6 +134,7 @@ struct AiSettings
    ulong             magic;
    int               deviation;
    string            comment;
+   bool              manageOrders;
    bool              hotkeys;
    string            keyBuy;
    string            keySell;
@@ -199,6 +203,43 @@ struct AiPlan
    double            base;         // equity or balance the % is measured on
    double            bid;
    double            ask;
+  };
+
+// An open position or pending order on the chart's symbol, as the server has it.
+struct AiLive
+  {
+   ulong             ticket;
+   bool              isOrder;      // pending order: its entry can move, a position's cannot
+   ENUM_ORDER_TYPE   type;         // ORDER_TYPE_BUY or ORDER_TYPE_SELL for a position
+   int               side;
+   double            lots;
+   double            open;         // open price, or the pending order's price
+   double            sl;           // 0 = none
+   double            tp;           // 0 = none
+   double            profit;       // floating profit with swap (positions)
+   double            stopLimit;    // limit price of a stop-limit order
+   int               timeType;     // ENUM_ORDER_TYPE_TIME of a pending order
+   datetime          expiration;
+  };
+
+// A change to one of them, checked and valued before it may be sent.
+struct AiModPlan
+  {
+   bool              valid;        // every check passed and something changed: Confirm may send it
+   bool              changed;      // differs from what the server has
+   string            err;          // first blocking problem
+   string            warn;         // note that does not block
+   double            open;
+   double            sl;           // 0 = none
+   double            tp;           // 0 = none
+   double            slMoney;      // result if the stop is hit, commission deducted: below 0 a loss, above 0 locked-in profit
+   double            slPct;
+   double            oldSlMoney;   // the same at the stop the server has
+   double            tpMoney;      // result at the target, commission deducted
+   double            tpPct;
+   double            rr;           // target distance / stop distance, 0 while the stop locks in profit
+   double            slPips;
+   double            tpPips;
   };
 
 // One remembered SL/TP. Distances are stored as price, not points or pips: a $5 stop on gold is

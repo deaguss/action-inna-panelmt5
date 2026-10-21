@@ -23,6 +23,7 @@ struct AiSpec
    double            pipSize;      // price distance of one pip
    double            pipPoints;    // points in one pip
    int               stopsLevel;   // points
+   int               freezeLevel;  // points: no changes to an order or level this close to the market
    int               tradeMode;
    int               exeMode;
    int               fillingFlags;
@@ -67,6 +68,7 @@ bool AiLoadSpec(const string symbol, const int pipMode, AiSpec &s)
       s.volStep = (s.volMin > 0.0) ? s.volMin : 0.01;
    s.volDigits = AiStepDigits(s.volStep);
    s.stopsLevel = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   s.freezeLevel = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_FREEZE_LEVEL);
    s.tradeMode = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_MODE);
    s.exeMode = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_EXEMODE);
    s.fillingFlags = (int)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);

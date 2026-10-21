@@ -206,6 +206,118 @@ void SuiteStopsOracle(const int n)
    Row(suite, cases, fails);
   }
 
+// AiCheckModify against an independent version written in whole points: a position's levels count
+// from the market, a pending order keeps its type, and the freeze level applies to what the server
+// has now.
+void SuiteModifyOracle(const int n)
+  {
+   string suite = "Changes to open trades against a whole-point reference";
+   int fails = 0;
+   int cases = 0;
+   for(int i = 0; i < n; i++)
+     {
+      AiSpec s;
+      RandomSpec(s);
+      s.tickSize = s.point;
+      s.tradeMode = SYMBOL_TRADE_MODE_FULL;
+      s.freezeLevel = RndChance(3) ? RndInt(1, 100) : 0;
+      int bidPts = RndInt(1000, 2000000);
+      int askPts = bidPts + RndInt(0, 50);
+      int side = RndChance(2) ? AI_BUY : AI_SELL;
+      bool buy = (side == AI_BUY);
+      AiLive l;
+      ZeroMemory(l);
+      l.ticket = 1;
+      l.side = side;
+      l.lots = 1.0;
+      l.isOrder = RndChance(2);
+      int openPts = bidPts + RndInt(-500, 500);
+      int newOpenPts = openPts;
+      if(l.isOrder)
+        {
+         bool okType = false;
+         l.type = AiResolveType(side, true, openPts * s.point, bidPts * s.point, askPts * s.point, okType);
+         if(!okType)
+            continue;   // an order exactly at the market has no type
+         if(!RndChance(3))
+            newOpenPts = bidPts + RndInt(-500, 500);
+        }
+      else
+         l.type = buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      int oldSlPts = RndChance(4) ? 0 : openPts + RndInt(-400, 400);
+      int oldTpPts = RndChance(4) ? 0 : openPts + RndInt(-400, 400);
+      int slPts = RndChance(5) ? 0 : newOpenPts + RndInt(-400, 400);
+      int tpPts = RndChance(5) ? 0 : newOpenPts + RndInt(-400, 400);
+      l.open = openPts * s.point;
+      l.sl = oldSlPts * s.point;
+      l.tp = oldTpPts * s.point;
+
+      int minPts = MathMax(s.stopsLevel, 1);
+      int fz = s.freezeLevel;
+      bool expectOk = true;
+      if(fz > 0)
+        {
+         if(l.isOrder)
+            expectOk = (MathAbs(openPts - (buy ? askPts : bidPts)) >= fz);
+         else if(buy)
+            expectOk = !((oldSlPts > 0 && bidPts - oldSlPts < fz) || (oldTpPts > 0 && oldTpPts - bidPts < fz));
+         else
+            expectOk = !((oldSlPts > 0 && oldSlPts - askPts < fz) || (oldTpPts > 0 && askPts - oldTpPts < fz));
+        }
+      if(expectOk && l.isOrder)
+        {
+         bool keepsType = false;
+         if(l.type == ORDER_TYPE_BUY_LIMIT)
+            keepsType = (newOpenPts < askPts);
+         else if(l.type == ORDER_TYPE_BUY_STOP)
+            keepsType = (newOpenPts > askPts);
+         else if(l.type == ORDER_TYPE_SELL_LIMIT)
+            keepsType = (newOpenPts > bidPts);
+         else
+            keepsType = (newOpenPts < bidPts);
+         int marketPts = buy ? askPts : bidPts;
+         if(!keepsType)
+            expectOk = false;
+         else if(slPts > 0 && (buy ? slPts >= newOpenPts : slPts <= newOpenPts))
+            expectOk = false;
+         else if(tpPts > 0 && (buy ? tpPts <= newOpenPts : tpPts >= newOpenPts))
+            expectOk = false;
+         else if(MathAbs(newOpenPts - marketPts) < minPts)
+            expectOk = false;
+         else if(slPts > 0 && MathAbs(newOpenPts - slPts) < minPts)
+            expectOk = false;
+         else if(tpPts > 0 && MathAbs(tpPts - newOpenPts) < minPts)
+            expectOk = false;
+        }
+      else if(expectOk)
+        {
+         if(buy)
+           {
+            if(slPts > 0 && bidPts - slPts < minPts)
+               expectOk = false;
+            if(tpPts > 0 && tpPts - bidPts < minPts)
+               expectOk = false;
+           }
+         else
+           {
+            if(slPts > 0 && slPts - askPts < minPts)
+               expectOk = false;
+            if(tpPts > 0 && askPts - tpPts < minPts)
+               expectOk = false;
+           }
+        }
+      string got = AiCheckModify(s, l, newOpenPts * s.point, slPts * s.point, tpPts * s.point, bidPts * s.point, askPts * s.point);
+      cases++;
+      if(!Expect((got == "") == expectOk, fails))
+         Detail(suite, (l.isOrder ? AiOrderTypeName(l.type) : (buy ? "buy position" : "sell position")) + " open " + IntegerToString(openPts) + " -> " +
+                IntegerToString(newOpenPts) + ", SL " + IntegerToString(oldSlPts) + " -> " + IntegerToString(slPts) + ", TP " + IntegerToString(oldTpPts) +
+                " -> " + IntegerToString(tpPts) + ", bid " + IntegerToString(bidPts) + ", ask " + IntegerToString(askPts) + " pts, stops level " +
+                IntegerToString(s.stopsLevel) + ", freeze level " + IntegerToString(s.freezeLevel) + ": expected " + (expectOk ? "pass" : "refusal") +
+                ", got \"" + got + "\"");
+     }
+   Row(suite, cases, fails);
+  }
+
 // Every remembered SL/TP survives being written to the recall file and read back.
 void SuiteMemoryRoundTrip(const int n)
   {

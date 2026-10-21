@@ -123,6 +123,8 @@ string AiRetcodeText(const uint code)
          return "Order state changed";
       case 10024:
          return "Too many requests";
+      case 10025:
+         return "Nothing to change";
       case 10026:
          return "The server disabled algo trading";
       case 10027:
@@ -155,6 +157,17 @@ string AiRetcodeText(const uint code)
          return "Hedging is not allowed";
      }
    return "Error";
+  }
+
+// Why a request did not go through, in words.
+string AiResultText(const MqlTradeResult &res)
+  {
+   if(res.retcode == 0)
+      return "OrderSend failed, error " + IntegerToString(GetLastError());
+   string msg = AiRetcodeText(res.retcode) + " (" + IntegerToString((int)res.retcode) + ")";
+   if(res.comment != "")
+      msg += ": " + res.comment;
+   return msg;
   }
 
 class CAiExecutor
@@ -238,16 +251,50 @@ public:
             r.volume = (res.volume > 0.0) ? res.volume : p.lots;
             return true;
            }
-         if(res.retcode == 0)
-            r.msg = "OrderSend failed, error " + IntegerToString(GetLastError());
-         else
-           {
-            r.msg = AiRetcodeText(res.retcode) + " (" + IntegerToString((int)res.retcode) + ")";
-            if(res.comment != "")
-               r.msg += ": " + res.comment;
-           }
+         r.msg = AiResultText(res);
          return false;
         }
+      return false;
+     }
+
+   // Changes a position's SL/TP, or a pending order's price and SL/TP. A pending order keeps its
+   // own expiry and stop-limit price.
+   bool              Modify(const AiSpec &s, const AiLive &l, const double open, const double sl, const double tp, AiSendResult &r)
+     {
+      ZeroMemory(r);
+      MqlTradeRequest req;
+      MqlTradeResult res;
+      ZeroMemory(req);
+      ZeroMemory(res);
+      req.symbol = s.symbol;
+      req.sl = sl;
+      req.tp = tp;
+      if(l.isOrder)
+        {
+         req.action = TRADE_ACTION_MODIFY;
+         req.order = l.ticket;
+         req.price = open;
+         req.stoplimit = l.stopLimit;
+         req.type_time = (ENUM_ORDER_TYPE_TIME)l.timeType;
+         req.expiration = l.expiration;
+        }
+      else
+        {
+         req.action = TRADE_ACTION_SLTP;
+         req.position = l.ticket;
+        }
+      ResetLastError();
+      bool sent = OrderSend(req, res);
+      r.retcode = res.retcode;
+      if(sent && (res.retcode == TRADE_RETCODE_DONE || res.retcode == TRADE_RETCODE_PLACED))
+        {
+         r.ok = true;
+         r.ticket = l.ticket;
+         r.price = l.isOrder ? open : l.open;
+         r.volume = l.lots;
+         return true;
+        }
+      r.msg = AiResultText(res);
       return false;
      }
   };

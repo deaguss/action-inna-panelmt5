@@ -11,6 +11,7 @@
 #include "Memory.mqh"
 #include "Ui.mqh"
 #include "PreviewLines.mqh"
+#include "OrderLines.mqh"
 #include "Hotkeys.mqh"
 #include "Executor.mqh"
 #include "ChartGuard.mqh"
@@ -19,6 +20,8 @@
 // Phases: IDLE (panel only) -> PREVIEW (lines on the chart, CONFIRM armed) -> SENDING -> COOLDOWN
 // (ignores clicks and keys queued while OrderSend blocked) -> IDLE after a fill, PREVIEW after a
 // failure. The object is a global of the EA, so it survives timeframe and symbol changes.
+// Open trades are drawn by CAiOrderLines; dragging one of their lines opens the modify card, which
+// works next to these phases and sends nothing until its own Confirm.
 class CAiApp
   {
 public:
@@ -32,6 +35,7 @@ private:
    CAiUi             m_ui;
    CAiPanel          m_panel;
    CAiLines          m_lines;
+   CAiOrderLines     m_orders;
    CAiExecutor       m_exec;
    CAiChartGuard     m_guard;
    CAiKv             m_store;
@@ -94,10 +98,29 @@ private:
    int               m_dragDX;
    int               m_dragDY;
    bool              m_lineDrag;
+   bool              m_orderDrag;    // the trader is dragging a line of an open trade
    ulong             m_lastMove;
 
    int               m_pinStep;
    string            m_pinName;
+
+   // A change to an open trade: dragged or typed, shown on the card, sent only by its Confirm.
+   AiLive            m_live[];       // positions and pending orders on the symbol, read on every refresh
+   bool              m_modOn;
+   bool              m_modDragging;  // its line is still under the mouse: the card opens on release
+   AiLive            m_modLive;      // the trade as the server has it
+   double            m_modOpen;
+   double            m_modSl;
+   double            m_modTp;
+   int               m_modWhich;     // level moved last: 0 entry, 1 SL, 2 TP
+   AiModPlan         m_mod;
+   ulong             m_modSince;     // Confirm waits 300 ms after the card opened or its values moved
+   int               m_modY;
+   string            m_modStatus;
+   int               m_modStatusLevel;
+   bool              m_modSending;
+   ulong             m_modBusyUntil; // clicks and keys queued while OrderSend blocked are ignored until then
+   bool              m_raisePanel;   // trade objects were created over the panel: draw it again on top
 
    //--- small helpers --------------------------------------------------
    void              Status(const string text, const int level, const int ms)
@@ -110,6 +133,18 @@ private:
    string            Currency() const
      {
       return AccountInfoString(ACCOUNT_CURRENCY);
+     }
+
+   // Equity or balance, whichever the risk % is measured on.
+   double            RiskBaseMoney() const
+     {
+      return (m_riskBase == AI_BASE_BALANCE) ? AccountInfoDouble(ACCOUNT_BALANCE) : AccountInfoDouble(ACCOUNT_EQUITY);
+     }
+
+   // An order or a change is being sent, or was just sent: clicks and keys wait.
+   bool              Busy() const
+     {
+      return (m_phase == AI_PHASE_SENDING || m_phase == AI_PHASE_COOLDOWN || m_modSending || AiNowMs() < m_modBusyUntil);
      }
 
    string            KeyHint() const
@@ -686,6 +721,251 @@ private:
       m_cooldownUntil = AiNowMs() + 700;
      }
 
+   //--- changes to open trades ------------------------------------------
+   string            TicketText(const ulong ticket) const
+     {
+      return "#" + IntegerToString((long)ticket);
+     }
+
+   bool              SamePrice(const double a, const double b) const
+     {
+      return MathAbs(a - b) < MathMax(m_spec.point, 1e-10) * 0.5;
+     }
+
+   int               LiveIndex(const ulong ticket) const
+     {
+      int n = ArraySize(m_live);
+      for(int i = 0; i < n; i++)
+         if(m_live[i].ticket == ticket)
+            return i;
+      return -1;
+     }
+
+   int               PriceY(const double price) const
+     {
+      int px = 0;
+      int py = 0;
+      if(!ChartTimePriceToXY(0, 0, TimeCurrent(), price, px, py))
+         return (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS, 0) / 2;
+      return py;
+     }
+
+   double            ModLevel(const int which) const
+     {
+      if(which == 0)
+         return m_modOpen;
+      if(which == 1)
+         return m_modSl;
+      return m_modTp;
+     }
+
+   void              CloseEdit()
+     {
+      m_modOn = false;
+      m_modDragging = false;
+      m_modStatus = "";
+      m_refreshEdits = true;
+     }
+
+   // Starts the change of the trade whose line or tag the trader used, or keeps the one already
+   // open for it. One card, one trade: another trade's open change is dropped.
+   bool              EditTrade(const ulong ticket)
+     {
+      if(m_modOn && m_modLive.ticket == ticket)
+         return true;
+      int i = LiveIndex(ticket);
+      if(i < 0)
+         return false;
+      if(AiIsStopLimit(m_live[i].type))
+        {
+         Status("Change a stop-limit order in MT5's Trade tab", 0, 5000);
+         return false;
+        }
+      if(m_modOn)
+         Status("The change to " + TicketText(m_modLive.ticket) + " was dropped. Nothing was sent", 0, 5000);
+      m_modOn = true;
+      m_modLive = m_live[i];
+      m_modOpen = m_live[i].open;
+      m_modSl = m_live[i].sl;
+      m_modTp = m_live[i].tp;
+      m_modSince = AiNowMs();
+      m_modStatus = "";
+      m_refreshEdits = true;
+      return true;
+     }
+
+   // A pending order's entry takes its stop and target along, so the money at risk stays the same.
+   void              SetModLevel(const int which, const double price)
+     {
+      if(which == 0)
+        {
+         if(!m_modLive.isOrder || price <= 0.0)
+            return;
+         double d = price - m_modOpen;
+         m_modOpen = price;
+         if(m_modSl > 0.0)
+            m_modSl = AiNormPrice(m_spec, m_modSl + d);
+         if(m_modTp > 0.0)
+            m_modTp = AiNormPrice(m_spec, m_modTp + d);
+        }
+      else if(which == 1)
+         m_modSl = price;
+      else
+         m_modTp = price;
+      m_modStatus = "";
+      m_refreshEdits = true;
+     }
+
+   // A line of an open trade is moving under the mouse. Only the change on the card follows it.
+   void              OnOrderLine(const ulong ticket, const int which, const double raw)
+     {
+      double price = AiNormPrice(m_spec, raw);
+      if(price <= 0.0 || !EditTrade(ticket))
+         return;
+      SetModLevel(which, price);
+      m_modWhich = which;
+      m_modDragging = true;
+     }
+
+   // The line was let go: the card opens level with it.
+   void              DropOrderLine()
+     {
+      m_orderDrag = false;
+      m_orders.EndDrag();
+      if(!m_modOn || !m_modDragging)
+         return;
+      m_modDragging = false;
+      m_modY = PriceY(ModLevel(m_modWhich));
+      m_modSince = AiNowMs();
+      m_refreshEdits = true;   // the card's fields still hold the last card's text
+     }
+
+   // A click on a trade's tag opens the card without moving anything, to type a level instead.
+   void              OnOrderTag(const ulong ticket, const int which, const int y)
+     {
+      if(!EditTrade(ticket))
+         return;
+      m_modWhich = which;
+      m_modDragging = false;
+      m_modY = y;
+      m_modSince = AiNowMs();
+      m_refreshEdits = true;
+     }
+
+   void              ModCancel()
+     {
+      if(!m_modOn)
+         return;
+      CloseEdit();
+      Status("Change discarded. Nothing was sent", 0, 2500);
+     }
+
+   // Reads the trades on the symbol and checks the open change with fresh prices. Returns true when
+   // the server's values for that trade moved since the card showed them.
+   bool              RebuildMod()
+     {
+      if(cfg.manageOrders)
+         AiReadLive(_Symbol, m_live);
+      else
+         ArrayResize(m_live, 0);
+      if(!m_modOn)
+         return false;
+      int i = LiveIndex(m_modLive.ticket);
+      if(i < 0 || m_live[i].isOrder != m_modLive.isOrder)
+        {
+         Status(TicketText(m_modLive.ticket) + ((i < 0) ? " is closed" : " was filled") + ". Nothing was changed", 1, 6000);
+         CloseEdit();
+         return false;
+        }
+      bool moved = false;
+      if(!SamePrice(m_live[i].open, m_modLive.open) || !SamePrice(m_live[i].sl, m_modLive.sl) || !SamePrice(m_live[i].tp, m_modLive.tp) ||
+         MathAbs(m_live[i].lots - m_modLive.lots) > 1e-9)
+        {
+         // Levels the trader did not touch follow the server; the ones they moved stay theirs.
+         if(SamePrice(m_modOpen, m_modLive.open))
+            m_modOpen = m_live[i].open;
+         if(SamePrice(m_modSl, m_modLive.sl))
+            m_modSl = m_live[i].sl;
+         if(SamePrice(m_modTp, m_modLive.tp))
+            m_modTp = m_live[i].tp;
+         m_modStatus = TicketText(m_modLive.ticket) + " was changed elsewhere. Check the values, then confirm";
+         m_modStatusLevel = 1;
+         m_modSince = AiNowMs();
+         m_refreshEdits = true;
+         moved = true;
+        }
+      m_modLive = m_live[i];
+      MqlTick tick;
+      ZeroMemory(tick);
+      SymbolInfoTick(_Symbol, tick);
+      AiBuildModPlan(m_spec, m_modLive, m_modOpen, m_modSl, m_modTp, cfg, tick, RiskBaseMoney(), m_mod);
+      return moved;
+     }
+
+   // "entry 1.08200, SL 1.08000, TP 1.08600": the levels a change moves.
+   string            ModLevelsText(const AiLive &was, const double open, const double sl, const double tp) const
+     {
+      string t = "";
+      if(was.isOrder && !SamePrice(open, was.open))
+         t = "entry " + AiPriceStr(m_spec, open);
+      if(!SamePrice(sl, was.sl))
+         t += ((t == "") ? "" : ", ") + "SL " + ((sl > 0.0) ? AiPriceStr(m_spec, sl) : "none");
+      if(!SamePrice(tp, was.tp))
+         t += ((t == "") ? "" : ", ") + "TP " + ((tp > 0.0) ? AiPriceStr(m_spec, tp) : "none");
+      return t;
+     }
+
+   void              ModConfirm()
+     {
+      if(!m_modOn || m_modDragging)
+         return;
+      if(AiNowMs() - m_modSince < 300)
+         return;
+      // Fresh prices and the trade as the server has it now; if it moved, the card shows that first.
+      if(RebuildMod() || !m_modOn)
+         return;
+      if(!m_mod.valid)
+         return;   // the card's status line says why
+      string perm = m_exec.PermissionProblem();
+      if(perm != "")
+        {
+         m_permProblem = perm;
+         return;
+        }
+      AiLive was = m_modLive;
+      double open = m_mod.open;
+      double sl = m_mod.sl;
+      double tp = m_mod.tp;
+      string levels = ModLevelsText(was, open, sl, tp);
+      m_modStatus = "";
+      m_modSending = true;
+      Draw(true);   // show "Saving..." before OrderSend blocks
+      AiSendResult r;
+      ZeroMemory(r);
+      bool ok = m_exec.Modify(m_spec, was, open, sl, tp, r);
+      m_modSending = false;
+      m_modBusyUntil = AiNowMs() + 700;
+      string before = " | before: entry " + AiPriceStr(m_spec, was.open) + " SL " + AiPriceStr(m_spec, was.sl) + " TP " + AiPriceStr(m_spec, was.tp) +
+                      ", " + AiLotsStr(m_spec, was.lots) + " lots";
+      if(ok)
+        {
+         string msg = "Changed " + TicketText(was.ticket) + ": " + levels;
+         Status(msg, 3, 8000);
+         AiLog(msg + before);
+         if(cfg.sounds)
+            PlaySound("ok.wav");
+         CloseEdit();
+        }
+      else
+        {
+         m_modStatus = "Not changed: " + ((r.msg != "") ? r.msg : "unknown error");
+         m_modStatusLevel = 2;
+         AiLog(m_modStatus + " | " + TicketText(was.ticket) + " " + levels + before);
+         if(cfg.sounds)
+            PlaySound("timeout.wav");
+        }
+     }
+
    //--- pinning ----------------------------------------------------------
    // The template is saved without our objects and with the chart's own settings, over two timer
    // ticks so the chart has applied the changes first. The EA itself is saved in the template.
@@ -705,8 +985,11 @@ private:
       m_pinName = name;
       m_pinStep = 1;
       m_menuOpen = false;
+      CloseEdit();
+      m_orderDrag = false;
       ObjectsDeleteAll(0, AI_OBJ_PREFIX);
       m_ui.Forget();
+      m_orders.Forget();
       m_guard.Restore(true);
       m_lastShift = -1.0;
       ChartRedraw();
@@ -723,7 +1006,7 @@ private:
       bool ok = ChartSaveTemplate(0, m_pinName);
       int err = GetLastError();
       m_pinStep = 0;
-      m_guard.Apply(cfg.hideOneClick, cfg.hotkeys);
+      m_guard.Apply(cfg.hideOneClick, cfg.hotkeys, cfg.manageOrders);
       MqlTick tick;
       m_lines.Create((SymbolInfoTick(_Symbol, tick) && tick.bid > 0.0) ? tick.bid : 1.0);
       m_lastSig = "";
@@ -791,6 +1074,24 @@ private:
          else
             Status("Enter the entry price", 2, 4000);
         }
+      else if(name == AI_P + "E_MENTRY" || name == AI_P + "E_MSL" || name == AI_P + "E_MTP")
+        {
+         int which = (name == AI_P + "E_MENTRY") ? 0 : ((name == AI_P + "E_MSL") ? 1 : 2);
+         if(m_modOn)
+           {
+            if(trimmed == "" && which > 0)
+               SetModLevel(which, 0.0);   // an empty field removes that level
+            else if(ok && v > 0.0)
+               SetModLevel(which, AiNormPrice(m_spec, v));
+            else
+              {
+               m_modStatus = "Enter a price";
+               m_modStatusLevel = 2;
+              }
+            // A click on Confirm right after typing waits until the new numbers are on the card.
+            m_modSince = AiNowMs();
+           }
+        }
       m_refreshEdits = true;
       Refresh(true);
      }
@@ -851,8 +1152,16 @@ private:
          if(!AiKeyMatch(m_keys[i], vk, shift, ctrl))
             continue;
          ENUM_AI_CMD cmd = KeyCmd(i);
+         // While the modify card is open, confirm and cancel belong to it.
+         if(m_modOn && !m_modDragging)
+           {
+            if(cmd == AI_CMD_CONFIRM)
+               cmd = AI_CMD_MOD_CONFIRM;
+            else if(cmd == AI_CMD_CANCEL)
+               cmd = AI_CMD_MOD_CANCEL;
+           }
          // The Enter that finished typing in a field must not also confirm the order.
-         if(cmd == AI_CMD_CONFIRM && AiNowMs() - m_lastEndEdit < 500)
+         if((cmd == AI_CMD_CONFIRM || cmd == AI_CMD_MOD_CONFIRM) && AiNowMs() - m_lastEndEdit < 500)
             return;
          Exec(cmd);
          return;
@@ -886,7 +1195,7 @@ private:
    void              OnMouse(const int mx, const int my, const int buttons)
      {
       bool down = ((buttons & 1) != 0);
-      m_guard.LockScroll(m_dragPanel || m_panel.Contains(mx, my));
+      m_guard.LockScroll(m_dragPanel || m_panel.Contains(mx, my) || m_panel.InCard(mx, my));
       if(down && !m_mouseDown)
         {
          m_mouseDown = true;
@@ -914,6 +1223,11 @@ private:
             m_lines.EndDrag();
             Refresh(true);
            }
+         if(m_orderDrag)
+           {
+            DropOrderLine();
+            Refresh(true);
+           }
          return;
         }
       if(!down)
@@ -928,6 +1242,19 @@ private:
          m_panel.MoveTo(mx - m_dragDX, my - m_dragDY, m_ui);
          Draw(true);
          return;
+        }
+      if(cfg.manageOrders && !Busy())
+        {
+         ulong ticket = 0;
+         int which = -1;
+         double moved = 0.0;
+         if(m_orders.DetectDrag(ticket, which, moved))
+           {
+            m_orderDrag = true;
+            OnOrderLine(ticket, which, moved);
+            Refresh(true);
+            return;
+           }
         }
       if(m_phase != AI_PHASE_PREVIEW)
          return;
@@ -1098,6 +1425,64 @@ private:
       v.editing = m_editing;
       v.refreshEdits = m_refreshEdits;
       v.focusCmd = m_focusCmd;
+
+      // The modify card waits for the mouse to let go of the line.
+      v.modOpen = (m_modOn && !m_modDragging);
+      if(!v.modOpen)
+         return;
+      v.modSide = m_modLive.side;
+      v.modY = m_modY;
+      string what = m_modLive.isOrder ? AiOrderTypeName(m_modLive.type) : ((m_modLive.side == AI_BUY) ? "BUY" : "SELL");
+      v.modTitle = "Modify " + what + " " + AiLotsStr(m_spec, m_modLive.lots) + " " + _Symbol;
+      v.modTicket = TicketText(m_modLive.ticket);
+      v.modEntryEdit = m_modLive.isOrder;
+      v.modEntryText = AiPriceStr(m_spec, m_mod.open);
+      v.modEntryWas = (m_modLive.isOrder && !SamePrice(m_mod.open, m_modLive.open)) ? "was " + AiPriceStr(m_spec, m_modLive.open) : "";
+      v.modEntryMoney = m_modLive.isOrder ? "" : "Now " + AiMoney(m_modLive.profit, cur, true);
+      v.modEntryTone = m_modLive.isOrder ? 0 : ((m_modLive.profit < 0.0) ? -1 : 1);
+      v.modSlText = (m_mod.sl > 0.0) ? AiPriceStr(m_spec, m_mod.sl) : "";
+      v.modSlWas = SamePrice(m_mod.sl, m_modLive.sl) ? "" : "was " + ((m_modLive.sl > 0.0) ? AiPriceStr(m_spec, m_modLive.sl) : "none");
+      v.modSlMoney = (m_mod.sl > 0.0) ? AiMoney(m_mod.slMoney, cur, true) + "  (" + AiSignedPct(m_mod.slPct) + ")" : "-";
+      v.modSlTone = (m_mod.sl <= 0.0) ? 0 : ((m_mod.slMoney < 0.0) ? -1 : 1);
+      v.modTpText = (m_mod.tp > 0.0) ? AiPriceStr(m_spec, m_mod.tp) : "";
+      v.modTpWas = SamePrice(m_mod.tp, m_modLive.tp) ? "" : "was " + ((m_modLive.tp > 0.0) ? AiPriceStr(m_spec, m_modLive.tp) : "none");
+      v.modTpMoney = (m_mod.tp > 0.0) ? AiMoney(m_mod.tpMoney, cur, true) + "  (" + AiSignedPct(m_mod.tpPct) + ")" : "-";
+      v.modTpTone = (m_mod.tp <= 0.0) ? 0 : ((m_mod.tpMoney < 0.0) ? -1 : 1);
+      if(m_mod.rr > 0.0)
+         v.modRR = "1:" + DoubleToString(m_mod.rr, 2);
+      else if(m_mod.sl > 0.0 && (m_mod.sl - m_mod.open) * m_modLive.side >= 0.0)
+         v.modRR = "Stop at break-even or better";
+      else
+         v.modRR = "-";
+      v.modStatusLevel = 0;
+      if(m_modSending)
+         v.modStatus = "Saving the change...";
+      else if(m_permProblem != "")
+        {
+         v.modStatus = m_permProblem;
+         v.modStatusLevel = 2;
+        }
+      else if(m_modStatus != "")
+        {
+         v.modStatus = m_modStatus;
+         v.modStatusLevel = m_modStatusLevel;
+        }
+      else if(m_mod.err != "")
+        {
+         v.modStatus = m_mod.err;
+         v.modStatusLevel = 2;
+        }
+      else if(m_mod.warn != "")
+        {
+         v.modStatus = m_mod.warn;
+         v.modStatusLevel = 1;
+        }
+      else if(!m_mod.changed)
+         v.modStatus = "Drag a line or type a price. Nothing is sent before Confirm";
+      else
+         v.modStatus = "Nothing changes on the server until you confirm";
+      v.modConfirmText = m_modSending ? "Saving..." : "Confirm change";
+      v.modConfirmEnabled = (m_mod.valid && !m_modSending && !Busy() && m_permProblem == "");
      }
 
    string            ViewSignature(const int cw, const int ch) const
@@ -1110,7 +1495,16 @@ private:
              IntegerToString(m_view.side) + (m_view.pending ? "P" : "M") + (m_view.compact ? "C" : "E") + (m_view.forcedCompact ? "F" : "-") +
              (m_view.menuOpen ? "O" : "-") + (m_view.showCancel ? "X" : "-") + (m_view.autoRecall ? "A" : "-") + (m_view.oneClick ? "1" : "-") +
              m_view.baseName + m_view.riskShort + "|" + m_view.editing + (m_view.refreshEdits ? "R" : "") + "|" + IntegerToString(m_view.focusCmd) + "|" +
-             IntegerToString(m_panel.x) + "," + IntegerToString(m_panel.y) + "," + IntegerToString(cw) + "," + IntegerToString(ch);
+             IntegerToString(m_panel.x) + "," + IntegerToString(m_panel.y) + "," + IntegerToString(cw) + "," + IntegerToString(ch) + "|" + CardSignature();
+     }
+
+   string            CardSignature() const
+     {
+      if(!m_view.modOpen)
+         return "-";
+      return IntegerToString(m_view.modY) + m_view.modTitle + m_view.modTicket + "|" + m_view.modEntryText + m_view.modEntryWas + m_view.modEntryMoney + "|" +
+             m_view.modSlText + m_view.modSlWas + m_view.modSlMoney + "|" + m_view.modTpText + m_view.modTpWas + m_view.modTpMoney + "|" +
+             m_view.modRR + "|" + m_view.modStatus + IntegerToString(m_view.modStatusLevel) + "|" + m_view.modConfirmText + (m_view.modConfirmEnabled ? "1" : "0");
      }
 
    void              UpdateShift(const int cw)
@@ -1135,19 +1529,38 @@ private:
       // A chart shorter than the full panel gets the slim layout, so CONFIRM never falls off it.
       m_forcedCompact = !m_panel.FullFits(m_ui);
       m_compact = (m_collapsed || m_forcedCompact);
+      bool tagsLeft = (m_panel.x + m_panel.w / 2 > cw / 2);
+      bool redraw = force;
+      // Open trades first. Objects they create are drawn over the panel, so the panel and the card
+      // are then drawn again on top, but never under a field the trader is typing in.
+      if(cfg.manageOrders)
+        {
+         ulong editTicket = 0;
+         if(m_modOn)
+            editTicket = m_modLive.ticket;
+         if(m_orders.Sync(m_live, editTicket, m_mod, m_spec, m_theme, RiskBaseMoney(), cfg.commissionRT, tagsLeft, cw, ch, m_ui, Currency()))
+            m_raisePanel = true;
+        }
+      if(m_raisePanel && m_editing == "")
+        {
+         m_raisePanel = false;
+         ObjectsDeleteAll(0, AI_P);
+         m_ui.Forget();
+         redraw = true;
+        }
       ComposeView(m_view);
       string sig = ViewSignature(cw, ch);
-      if(force || sig != m_lastSig)
+      if(redraw || sig != m_lastSig)
         {
          m_lastSig = sig;
          m_ui.BeginFrame();
          m_panel.Render(m_view, m_theme, m_ui);
+         m_panel.RenderCard(m_view, m_theme, m_ui);
          m_ui.EndFrame();
          m_refreshEdits = false;
         }
       bool show = (m_phase == AI_PHASE_PREVIEW || m_phase == AI_PHASE_SENDING ||
                    (m_phase == AI_PHASE_COOLDOWN && m_afterCooldown == AI_PHASE_PREVIEW));
-      bool tagsLeft = (m_panel.x + m_panel.w / 2 > cw / 2);
       m_lines.Sync(m_plan, m_spec, m_theme, show, cfg.showZones, tagsLeft, cw, ch, m_ui, Currency());
       UpdateShift(cw);
       ChartRedraw();
@@ -1162,6 +1575,7 @@ private:
          return;
       m_lastRefresh = now;
       Rebuild();
+      RebuildMod();
       Draw(force);
      }
 
@@ -1169,7 +1583,7 @@ private:
      {
       if(cmd == AI_CMD_NONE)
          return;
-      if(m_phase == AI_PHASE_SENDING || m_phase == AI_PHASE_COOLDOWN || m_pinStep != 0)
+      if(Busy() || m_pinStep != 0)
          return;
       if(m_statusUntil == 0)
          m_status = "";   // a message without a timeout lasts until the next action
@@ -1256,6 +1670,12 @@ private:
          case AI_CMD_TEMPLATE:
             StartPin(AI_TEMPLATE_NAME);
             break;
+         case AI_CMD_MOD_CONFIRM:
+            ModConfirm();
+            break;
+         case AI_CMD_MOD_CANCEL:
+            ModCancel();
+            break;
          default:
             break;
         }
@@ -1320,9 +1740,25 @@ public:
       m_dragDX = 0;
       m_dragDY = 0;
       m_lineDrag = false;
+      m_orderDrag = false;
       m_lastMove = 0;
       m_pinStep = 0;
       m_pinName = "";
+      m_modOn = false;
+      m_modDragging = false;
+      ZeroMemory(m_modLive);
+      m_modOpen = 0.0;
+      m_modSl = 0.0;
+      m_modTp = 0.0;
+      m_modWhich = 1;
+      ZeroMemory(m_mod);
+      m_modSince = 0;
+      m_modY = 0;
+      m_modStatus = "";
+      m_modStatusLevel = 0;
+      m_modSending = false;
+      m_modBusyUntil = 0;
+      m_raisePanel = false;
      }
 
    int               Init()
@@ -1399,18 +1835,26 @@ public:
       ParseKeys();
 
       m_guard.Capture();
-      m_guard.Apply(cfg.hideOneClick, cfg.hotkeys);
+      m_guard.Apply(cfg.hideOneClick, cfg.hotkeys, cfg.manageOrders);
       m_lastShift = -1.0;
 
       // Lines and tags first, so the panel created after them is drawn on top.
       ObjectsDeleteAll(0, AI_OBJ_PREFIX);
       m_ui.Forget();
+      m_orders.Forget();
       MqlTick tick;
       m_lines.Create((SymbolInfoTick(_Symbol, tick) && tick.bid > 0.0) ? tick.bid : 1.0);
       m_lastSig = "";
       m_mouseDown = false;
       m_dragPanel = false;
       m_lineDrag = false;
+      m_orderDrag = false;
+      // A change that was open is dropped; nothing of it was sent.
+      m_modOn = false;
+      m_modDragging = false;
+      m_modSending = false;
+      m_modStatus = "";
+      m_raisePanel = false;
       m_editing = "";
       m_pinStep = 0;
       m_lastPermCheck = AiNowMs();
@@ -1487,6 +1931,19 @@ public:
          return;
       if(id == CHARTEVENT_OBJECT_CLICK)
         {
+         // A click on an open trade's tag opens the modify card for it.
+         if(StringFind(sparam, AI_O) == 0)
+           {
+            ulong ticket = 0;
+            int which = -1;
+            string part = "";
+            if(cfg.manageOrders && !Busy() && m_orders.Parse(sparam, ticket, which, part) && (part == "b" || part == "x"))
+              {
+               OnOrderTag(ticket, which, (int)dparam);
+               Refresh(true);
+              }
+            return;
+           }
          // A mouse click takes over from keyboard focus.
          if(StringFind(sparam, AI_P) == 0)
             m_focusCmd = AI_CMD_NONE;
@@ -1508,6 +1965,18 @@ public:
         }
       if(id == CHARTEVENT_OBJECT_DRAG)
         {
+         // An open trade's line was dropped: the card opens, nothing is sent.
+         if(StringFind(sparam, AI_O) == 0)
+           {
+            ulong ticket = 0;
+            int which = -1;
+            string part = "";
+            if(cfg.manageOrders && !Busy() && m_orders.Parse(sparam, ticket, which, part) && part == "")
+               OnOrderLine(ticket, which, ObjectGetDouble(0, sparam, OBJPROP_PRICE));
+            DropOrderLine();
+            Refresh(true);
+            return;
+           }
          int idx = m_lines.IndexOf(sparam);
          if(idx >= 0 && m_phase == AI_PHASE_PREVIEW)
            {

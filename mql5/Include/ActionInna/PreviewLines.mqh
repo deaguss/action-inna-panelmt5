@@ -9,6 +9,84 @@
 #include "SymbolSpec.mqh"
 #include "Ui.mqh"
 
+void AiShowObject(const string name, const bool on)
+  {
+   ObjectSetInteger(0, name, OBJPROP_TIMEFRAMES, on ? OBJ_ALL_PERIODS : OBJ_NO_PERIODS);
+  }
+
+// A price tag is a box (rn) with its text (ln). True when one of them had to be created.
+bool AiEnsureTag(const string rn, const string ln)
+  {
+   bool created = false;
+   if(ObjectFind(0, rn) < 0 && ObjectCreate(0, rn, OBJ_RECTANGLE_LABEL, 0, 0, 0))
+     {
+      ObjectSetInteger(0, rn, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, rn, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      ObjectSetInteger(0, rn, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, rn, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, rn, OBJPROP_ZORDER, 6);
+      ObjectSetString(0, rn, OBJPROP_TOOLTIP, "\n");
+      created = true;
+     }
+   if(ObjectFind(0, ln) < 0 && ObjectCreate(0, ln, OBJ_LABEL, 0, 0, 0))
+     {
+      ObjectSetInteger(0, ln, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, ln, OBJPROP_ANCHOR, ANCHOR_LEFT);
+      ObjectSetInteger(0, ln, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, ln, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, ln, OBJPROP_ZORDER, 7);
+      ObjectSetString(0, ln, OBJPROP_TOOLTIP, "\n");
+      created = true;
+     }
+   return created;
+  }
+
+// A coloured price tag on the line. Off-screen levels stick to the edge with an arrow.
+void AiPlaceTag(const string rn, const string ln, const double price, const string text, const color bg, const color fg, CAiUi &ui, const bool left, const int chartW, const int chartH)
+  {
+   AiEnsureTag(rn, ln);
+   int x = 0;
+   int y = 0;
+   if(!ChartTimePriceToXY(0, 0, TimeCurrent(), price, x, y))
+     {
+      AiShowObject(rn, false);
+      AiShowObject(ln, false);
+      return;
+     }
+   int fs = MathMax(ui.fontSize - 1, 7);
+   int h = ui.S(18);
+   int pad = ui.S(6);
+   string shown = text;
+   int ty = y - h / 2;
+   if(y < 0)
+     {
+      shown = "^ " + text;
+      ty = 0;
+     }
+   else if(y > chartH)
+     {
+      shown = "v " + text;
+      ty = chartH - h;
+     }
+   ty = MathMax(0, MathMin(ty, chartH - h));
+   int w = ui.TextWidth(shown, fs) + 2 * pad;
+   int tx = left ? ui.S(8) : chartW - w - ui.S(8);
+   AiShowObject(rn, true);
+   AiShowObject(ln, true);
+   ObjectSetInteger(0, rn, OBJPROP_XDISTANCE, tx);
+   ObjectSetInteger(0, rn, OBJPROP_YDISTANCE, ty);
+   ObjectSetInteger(0, rn, OBJPROP_XSIZE, w);
+   ObjectSetInteger(0, rn, OBJPROP_YSIZE, h);
+   ObjectSetInteger(0, rn, OBJPROP_BGCOLOR, bg);
+   ObjectSetInteger(0, rn, OBJPROP_COLOR, bg);
+   ObjectSetInteger(0, ln, OBJPROP_XDISTANCE, tx + pad);
+   ObjectSetInteger(0, ln, OBJPROP_YDISTANCE, ty + h / 2);
+   ObjectSetString(0, ln, OBJPROP_TEXT, shown);
+   ObjectSetString(0, ln, OBJPROP_FONT, ui.font);
+   ObjectSetInteger(0, ln, OBJPROP_FONTSIZE, ui.F(fs));
+   ObjectSetInteger(0, ln, OBJPROP_COLOR, fg);
+  }
+
 class CAiLines
   {
 private:
@@ -82,26 +160,7 @@ private:
 
    void              EnsureTag(const string key)
      {
-      string rn = AI_T + key + "#bg";
-      string ln = AI_T + key + "#tx";
-      if(ObjectFind(0, rn) < 0 && ObjectCreate(0, rn, OBJ_RECTANGLE_LABEL, 0, 0, 0))
-        {
-         ObjectSetInteger(0, rn, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-         ObjectSetInteger(0, rn, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-         ObjectSetInteger(0, rn, OBJPROP_SELECTABLE, false);
-         ObjectSetInteger(0, rn, OBJPROP_HIDDEN, true);
-         ObjectSetInteger(0, rn, OBJPROP_ZORDER, 6);
-         ObjectSetString(0, rn, OBJPROP_TOOLTIP, "\n");
-        }
-      if(ObjectFind(0, ln) < 0 && ObjectCreate(0, ln, OBJ_LABEL, 0, 0, 0))
-        {
-         ObjectSetInteger(0, ln, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-         ObjectSetInteger(0, ln, OBJPROP_ANCHOR, ANCHOR_LEFT);
-         ObjectSetInteger(0, ln, OBJPROP_SELECTABLE, false);
-         ObjectSetInteger(0, ln, OBJPROP_HIDDEN, true);
-         ObjectSetInteger(0, ln, OBJPROP_ZORDER, 7);
-         ObjectSetString(0, ln, OBJPROP_TOOLTIP, "\n");
-        }
+      AiEnsureTag(AI_T + key + "#bg", AI_T + key + "#tx");
      }
 
    // Hidden lines are deselected too, so their handles do not linger on the chart.
@@ -117,51 +176,9 @@ private:
       Show(AI_T + key + "#tx", false);
      }
 
-   // A coloured price tag on the line. Off-screen levels stick to the edge with an arrow.
    void              SetTag(const string key, const double price, const string text, const color bg, const color fg, CAiUi &ui, const bool left, const int chartW, const int chartH)
      {
-      EnsureTag(key);
-      string rn = AI_T + key + "#bg";
-      string ln = AI_T + key + "#tx";
-      int x = 0;
-      int y = 0;
-      if(!ChartTimePriceToXY(0, 0, TimeCurrent(), price, x, y))
-        {
-         HideTag(key);
-         return;
-        }
-      int fs = MathMax(ui.fontSize - 1, 7);
-      int h = ui.S(18);
-      int pad = ui.S(6);
-      string shown = text;
-      int ty = y - h / 2;
-      if(y < 0)
-        {
-         shown = "^ " + text;
-         ty = 0;
-        }
-      else if(y > chartH)
-        {
-         shown = "v " + text;
-         ty = chartH - h;
-        }
-      ty = MathMax(0, MathMin(ty, chartH - h));
-      int w = ui.TextWidth(shown, fs) + 2 * pad;
-      int tx = left ? ui.S(8) : chartW - w - ui.S(8);
-      Show(rn, true);
-      Show(ln, true);
-      ObjectSetInteger(0, rn, OBJPROP_XDISTANCE, tx);
-      ObjectSetInteger(0, rn, OBJPROP_YDISTANCE, ty);
-      ObjectSetInteger(0, rn, OBJPROP_XSIZE, w);
-      ObjectSetInteger(0, rn, OBJPROP_YSIZE, h);
-      ObjectSetInteger(0, rn, OBJPROP_BGCOLOR, bg);
-      ObjectSetInteger(0, rn, OBJPROP_COLOR, bg);
-      ObjectSetInteger(0, ln, OBJPROP_XDISTANCE, tx + pad);
-      ObjectSetInteger(0, ln, OBJPROP_YDISTANCE, ty + h / 2);
-      ObjectSetString(0, ln, OBJPROP_TEXT, shown);
-      ObjectSetString(0, ln, OBJPROP_FONT, ui.font);
-      ObjectSetInteger(0, ln, OBJPROP_FONTSIZE, ui.F(fs));
-      ObjectSetInteger(0, ln, OBJPROP_COLOR, fg);
+      AiPlaceTag(AI_T + key + "#bg", AI_T + key + "#tx", price, text, bg, fg, ui, left, chartW, chartH);
      }
 
 public:

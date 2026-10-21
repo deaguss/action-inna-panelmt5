@@ -33,6 +33,7 @@ input bool                InpOneClick       = false;          // One-click tradi
 input ulong               InpMagic          = 0;              // Magic number (0 = counts as a manual trade)
 input int                 InpDeviation      = 10;             // Max slippage in points (instant execution only)
 input string              InpComment        = "ActionInna";   // Order comment
+input bool                InpManageOrders   = true;           // Drag open trades' entry/SL/TP with a confirm pop-up (replaces MT5's own trade lines on this chart)
 
 input group "Hotkeys (the chart must have focus)"
 input bool                InpHotkeys        = true;           // Enable hotkeys
@@ -81,6 +82,7 @@ int OnInit()
    g_app.cfg.magic = InpMagic;
    g_app.cfg.deviation = InpDeviation;
    g_app.cfg.comment = InpComment;
+   g_app.cfg.manageOrders = InpManageOrders;
    g_app.cfg.hotkeys = InpHotkeys;
    g_app.cfg.keyBuy = InpKeyBuy;
    g_app.cfg.keySell = InpKeySell;

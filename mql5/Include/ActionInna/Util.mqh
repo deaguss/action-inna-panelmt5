@@ -122,6 +122,14 @@ string AiMoney(const double v, const string currency, const bool withSign = fals
    return sign + num + " " + currency;
   }
 
+// "+1.25%", "-0.50%", "0.00%".
+string AiSignedPct(const double pct)
+  {
+   if(MathAbs(pct) < 0.005)
+      return "0.00%";
+   return ((pct > 0.0) ? "+" : "") + DoubleToString(pct, 2) + "%";
+  }
+
 ulong AiNowMs()
   {
    return GetMicrosecondCount() / 1000;
@@ -143,6 +151,10 @@ string AiOrderTypeName(const ENUM_ORDER_TYPE t)
          return "BUY STOP";
       case ORDER_TYPE_SELL_STOP:
          return "SELL STOP";
+      case ORDER_TYPE_BUY_STOP_LIMIT:
+         return "BUY STOP LIMIT";
+      case ORDER_TYPE_SELL_STOP_LIMIT:
+         return "SELL STOP LIMIT";
       default:
          return "ORDER";
      }

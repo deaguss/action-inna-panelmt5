@@ -13,6 +13,9 @@ sits on the chart in place of MT5's One-Click panel:
   and %. Drag the lines and every number follows. The order goes out only when you press Confirm.
 - **Market and pending orders**. Drag the entry line away from the price and it becomes a Limit or
   Stop order.
+- **Change open trades with a confirm pop-up**, as on Exness. Drag the SL, TP or entry line of an open
+  position or pending order and a card shows the new prices and money. Nothing changes until you press
+  Confirm. (With MT5's own trade lines, a drag can change the order the moment you let go.)
 - **Recall of earlier SL/TP** per symbol, like Exness's "Set SL/TP automatically".
 - **Hotkeys** for the presets, buy/sell preview, confirm and cancel.
 - **Stays put**: MT5 reopens it with your charts. "Pin to new charts" puts it on every new chart too.
@@ -25,9 +28,11 @@ It is an Expert Advisor (MQL5), so it runs inside MT5 with MT5's own prices and 
 - On an Exness demo account (hedging, USD):
   - a pending SELL STOP was placed through the panel, with its SL and TP;
   - Pin to new charts works, and so does reopening MT5 with the panel back on its charts;
-  - the risk numbers on the panel match a hand calculation.
-- Not yet tried: market orders through the panel, the rest of the checklist in section 10, other brokers,
-  and MT5 on Mac or Linux. If you run it there, open an issue with what you saw.
+  - the risk numbers on the panel match a hand calculation;
+  - an open position's SL and TP were changed by dragging their lines and confirming on the card.
+- Not yet tried: market orders through the panel, dragging a pending order's entry, the rest of the
+  checklist in section 10, other brokers, and MT5 on Mac or Linux. If you run it there, open an issue
+  with what you saw.
 
 The test script and how to run it are in section 10.
 
@@ -111,6 +116,32 @@ follows from the price:
 - Before anything is saved, recall uses the SL/TP of your newest open position or recent trade on the
   symbol.
 
+**Changing open trades (drag, then confirm).**
+
+When One-Click Trading is on, MT5's own trade lines change a position or order the moment a drag
+ends. ActionInna switches those lines off on its chart and draws its own for every position and
+pending order on the symbol. Dragging one of them never sends anything:
+
+- Drag a **SL** or **TP** line, or a pending order's **entry** line. The tag on the line shows the new
+  price and money while you drag.
+- Let go and the modify card opens beside the panel. It shows each level's new price, the old one
+  ("was ..."), the money and % at each level, and the risk : reward. You can also type the prices in its
+  fields.
+- **Confirm change** sends the change. **Cancel** (or **Esc**) puts the lines back, and nothing is sent.
+- Moving a pending order's entry moves its SL and TP along with it, so the money at risk stays the
+  same. Drag SL or TP afterwards to set them on their own.
+- A position's stop may go to break-even or past it, to lock in profit. The card checks the levels
+  against the market price, the broker's minimum distance and its freeze level, and against "Require a
+  stop loss / take profit".
+- The safety cap blocks a change that raises the risk above it. Tightening a stop is never blocked.
+- Click a trade's tag to open the card without dragging, for example to add a missing SL or TP.
+- Stop-limit orders are drawn but locked: change them in MT5's Trade tab.
+- Drag another line of the same trade before confirming, and the card shows both changes and sends
+  them in one request. Dragging a different trade drops the first change.
+
+Switch this off with the input **Drag open trades with a confirm pop-up**. MT5's own lines come back
+when it is off and when the EA is removed. Charts without ActionInna keep MT5's own behaviour.
+
 **Other.**
 
 - **Collapse**: the `-` button or **H** shrinks the panel to a slim SELL / risk / BUY bar. Its middle
@@ -155,6 +186,9 @@ Every key in the first part of the table can be changed in the inputs, for examp
 `CTRL+1`; leave a key empty to switch it off. Alt combinations are not offered because MT5 keeps them.
 Tab works even with the hotkeys switched off. Typing a number into a field (custom risk, SL, TP, entry)
 needs a click on the field: MT5 has no way for a program to put the cursor in a field.
+
+While the modify card is open, the Confirm key (Enter) confirms the change and the Cancel key (Esc)
+discards it. Once the card is closed, they work on the preview again.
 
 While ActionInna runs, Enter and Space no longer open MT5's quick-navigation box. It comes back when the
 EA is removed.
@@ -222,6 +256,7 @@ The lot size and money do not depend on the convention, only the pip numbers do.
 | | Magic number | 0 (manual trade) |
 | | Max slippage | 10 points (instant execution only) |
 | | Order comment | ActionInna |
+| | Drag open trades with a confirm pop-up | on (replaces MT5's own trade lines on this chart) |
 | Hotkeys | Keys, see section 5 | |
 | Display | Hide MT5's One-Click panel | on |
 | | Shift the chart for the panel | on |
@@ -247,13 +282,16 @@ Panel choices (risk chip, custom values, toggles, position) are saved in
 | Min lot would risk ... | The stop is too wide for the risk; tighten it, raise the risk, or use lots |
 | Panel too small or too large | Input **Panel scale** |
 | One-Click panel missing after MT5 crashed | Right-click the chart > One Click Trading (Alt+T) |
+| MT5's own trade lines are gone from the chart | ActionInna draws its own while it runs (section 4). They come back when the EA is removed. After a crash: F8 > Show > Show trade levels |
+| Too close to the market to change (freeze level) | The broker freezes a level or order this close to the price. Wait for the price to move away |
 | Anything else | The log: `MQL5\Files\ActionInna\log.txt` (with the dev set-up: `runtime\log.txt` here) |
 
 ## 10. Test checklist (demo account first)
 
 1. Run the **ActionInnaTests** script (Navigator > Scripts > ActionInna, drag it onto any chart, press
-   OK). It runs the worked examples, then about 92,000 generated scenarios: lot sizing, rounding,
-   order types, SL/TP checks against an independent reference, recall files (including damaged ones),
+   OK). It runs the worked examples, then about 102,000 generated scenarios: lot sizing, rounding,
+   order types, SL/TP checks and changes to open trades against independent references, recall files
+   (including damaged ones),
    typed numbers, hotkey names, pip sizes, money formatting, and 2,000 full order plans on the chart's
    symbol with live prices. It sends no orders. Every suite should say "all passed". Raise **Rounds**
    for more scenarios, and change **Seed** for different ones (the same seed replays the same ones).
@@ -269,6 +307,14 @@ Panel choices (risk chip, custom values, toggles, position) are saved in
 8. Remove the EA: MT5's One-Click panel and the chart shift come back.
 9. Hold **B** or press Enter right after typing in a field: no order is sent twice.
 10. Switch Algo Trading off: the panel says so and sends nothing.
+11. Turn MT5's One-Click Trading on, open a position, then drag its SL line. The card opens and the
+    Trade tab still shows the old SL. Press Cancel: the line goes back. Drag it again and confirm: the
+    Trade tab shows the new SL.
+12. Drag SL, then TP, then confirm: both change in one go. Move the stop past the open price: allowed.
+    Drag it past the market price: Confirm stays disabled and the card says why.
+13. Place a Buy Limit and drag its entry: SL and TP follow at the same distance. Drag it above the
+    price: the card refuses, because a Buy Limit must stay below the market.
+14. Remove the EA: MT5's own trade lines come back.
 
 Then repeat the checks you care about on the live account with the smallest lot.
 
@@ -278,12 +324,13 @@ Then repeat the checks you care about on the live account with the smallest lot.
 mql5/
   Experts/ActionInna/ActionInna.mq5     inputs, event handlers
   Include/ActionInna/
-    App.mqh          state machine (idle > preview > sending > cooldown), commands, chart events
-    RiskCalc.mqh     order plan: lots, money, checks
+    App.mqh          state machine (idle > preview > sending > cooldown), modify card, commands, chart events
+    RiskCalc.mqh     order plan: lots, money, checks; checks for changes to open trades
     SymbolSpec.mqh   symbol data, pip size, rounding
     Memory.mqh       SL/TP recall and settings files
     Panel.mqh        panel layout
     PreviewLines.mqh lines, zones and price tags on the chart
+    OrderLines.mqh   lines of open trades, whose drags go to the modify card
     Executor.mqh     permissions, filling modes, OrderSend
     ChartGuard.mqh   chart settings changed while the EA runs, and their restore
     Hotkeys.mqh, Ui.mqh, Util.mqh, Defines.mqh

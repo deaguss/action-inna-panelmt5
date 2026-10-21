@@ -413,4 +413,169 @@ void AiBuildPlan(const AiSpec &s, const AiInput &in, const AiSettings &cfg, cons
    p.valid = true;
   }
 
+//--- changes to open trades ---------------------------------------------
+
+bool AiIsStopLimit(const ENUM_ORDER_TYPE type)
+  {
+   return (type == ORDER_TYPE_BUY_STOP_LIMIT || type == ORDER_TYPE_SELL_STOP_LIMIT);
+  }
+
+// Signed money for 'lots' from open to price: above 0 is a gain. OrderCalcProfit first, the tick
+// value as the fallback, as in AiLossPerLot.
+bool AiPnlAt(const AiSpec &s, const int side, const double lots, const double open, const double price, double &pnl)
+  {
+   pnl = 0.0;
+   if(lots <= 0.0 || open <= 0.0 || price <= 0.0)
+      return false;
+   ENUM_ORDER_TYPE t = (side == AI_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   if(OrderCalcProfit(t, s.symbol, lots, open, price, pnl))
+      return true;
+   pnl = 0.0;
+   double tick = (s.tickSize > 0.0) ? s.tickSize : s.point;
+   double move = (price - open) * side;
+   double tv = SymbolInfoDouble(s.symbol, (move < 0.0) ? SYMBOL_TRADE_TICK_VALUE_LOSS : SYMBOL_TRADE_TICK_VALUE_PROFIT);
+   if(tv <= 0.0)
+      tv = SymbolInfoDouble(s.symbol, SYMBOL_TRADE_TICK_VALUE);
+   if(tick <= 0.0 || tv <= 0.0)
+      return false;
+   pnl = move / tick * tv * lots;
+   return true;
+  }
+
+// "" when the server should accept this change to an open trade, else why not.
+// A position's SL and TP count from the market, not from its open price, so a stop at break-even
+// or past it (locking in profit) is fine. A pending order must keep its type, and its levels count
+// from its new entry. Nothing inside the broker's freeze level can change at all.
+string AiCheckModify(const AiSpec &s, const AiLive &l, const double open, const double sl, const double tp, const double bid, const double ask)
+  {
+   if(AiIsStopLimit(l.type))
+      return "Change a stop-limit order in MT5's Trade tab";
+   if(s.tradeMode == SYMBOL_TRADE_MODE_DISABLED)
+      return "Trading is disabled on this symbol";
+   if(s.orderFlags != 0)
+     {
+      if(sl > 0.0 && (s.orderFlags & SYMBOL_ORDER_SL) == 0)
+         return "This symbol does not accept a stop loss";
+      if(tp > 0.0 && (s.orderFlags & SYMBOL_ORDER_TP) == 0)
+         return "This symbol does not accept a take profit";
+     }
+   bool buy = (l.side == AI_BUY);
+   double eps = s.point * 0.5;
+   if(s.freezeLevel > 0)
+     {
+      double fz = s.freezeLevel * s.point;
+      string fzTxt = "Too close to the market to change (broker freeze level " + DoubleToString(AiSafeDiv(fz, s.pipSize), 1) + " pips)";
+      if(l.isOrder)
+        {
+         if(MathAbs(l.open - (buy ? ask : bid)) < fz - eps)
+            return fzTxt;
+        }
+      else if(buy)
+        {
+         if((l.sl > 0.0 && bid - l.sl < fz - eps) || (l.tp > 0.0 && l.tp - bid < fz - eps))
+            return fzTxt;
+        }
+      else if((l.sl > 0.0 && l.sl - ask < fz - eps) || (l.tp > 0.0 && ask - l.tp < fz - eps))
+         return fzTxt;
+     }
+   if(l.isOrder)
+     {
+      bool okType = false;
+      ENUM_ORDER_TYPE t = AiResolveType(l.side, true, open, bid, ask, okType);
+      if(!okType || t != l.type)
+        {
+         bool below = (l.type == ORDER_TYPE_BUY_LIMIT || l.type == ORDER_TYPE_SELL_STOP);
+         return "A " + AiOrderTypeName(l.type) + " must stay " + (below ? "below" : "above") + " the market price";
+        }
+      return AiCheckStops(s, l.type, open, sl, tp, bid, ask);
+     }
+   double minDist = MathMax((double)s.stopsLevel, 1.0) * s.point;
+   string minTxt = (s.stopsLevel > 0) ? " (broker minimum " + DoubleToString(AiSafeDiv(minDist, s.pipSize), 1) + " pips)" : "";
+   // A buy closes at the bid, a sell at the ask.
+   double px = buy ? bid : ask;
+   if(sl > 0.0 && (px - sl) * l.side < minDist - eps)
+      return ((px - sl) * l.side <= 0.0) ? "Stop loss must stay " + (buy ? "below" : "above") + " the price" : "Stop loss is too close to the price" + minTxt;
+   if(tp > 0.0 && (tp - px) * l.side < minDist - eps)
+      return ((tp - px) * l.side <= 0.0) ? "Take profit must stay " + (buy ? "above" : "below") + " the price" : "Take profit is too close to the price" + minTxt;
+   return "";
+  }
+
+// The safety cap blocks a change that takes the risk above it and makes it bigger. Tightening a
+// stop, or adding one where there was none, always goes through.
+bool AiModCapBlocks(const double cap, const double riskPct, const double newRisk, const double oldRisk, const bool hadStop)
+  {
+   if(cap <= 0.0 || riskPct <= cap + 1e-9 || !hadStop)
+      return false;
+   return (newRisk > oldRisk + 0.01);
+  }
+
+// Checks and values a change to an open trade. A position keeps its open price whatever 'open'
+// says. base is the equity or balance the % is measured on.
+void AiBuildModPlan(const AiSpec &s, const AiLive &l, const double open, const double sl, const double tp, const AiSettings &cfg,
+                    const MqlTick &tick, const double base, AiModPlan &m)
+  {
+   ZeroMemory(m);
+   m.open = l.isOrder ? AiNormPrice(s, open) : l.open;
+   m.sl = AiNormPrice(s, sl);
+   m.tp = AiNormPrice(s, tp);
+   double eps = MathMax(s.point, 1e-10) * 0.5;
+   m.changed = (MathAbs(m.open - l.open) > eps || MathAbs(m.sl - l.sl) > eps || MathAbs(m.tp - l.tp) > eps);
+   if(!s.ok)
+     {
+      m.err = "Loading " + s.symbol + " data from the broker...";
+      return;
+     }
+   if(tick.bid <= 0.0 || tick.ask <= 0.0)
+     {
+      m.err = "Waiting for " + s.symbol + " prices from the broker...";
+      return;
+     }
+   double comm = MathMax(cfg.commissionRT, 0.0) * l.lots;
+   double pnl = 0.0;
+   if(m.sl > 0.0 && AiPnlAt(s, l.side, l.lots, m.open, m.sl, pnl))
+      m.slMoney = pnl - comm;
+   if(l.sl > 0.0 && AiPnlAt(s, l.side, l.lots, l.open, l.sl, pnl))
+      m.oldSlMoney = pnl - comm;
+   if(m.tp > 0.0 && AiPnlAt(s, l.side, l.lots, m.open, m.tp, pnl))
+      m.tpMoney = pnl - comm;
+   m.slPct = AiSafeDiv(m.slMoney, base) * 100.0;
+   m.tpPct = AiSafeDiv(m.tpMoney, base) * 100.0;
+   double slDist = (m.sl > 0.0) ? MathAbs(m.open - m.sl) : 0.0;
+   double tpDist = (m.tp > 0.0) ? MathAbs(m.tp - m.open) : 0.0;
+   m.slPips = AiSafeDiv(slDist, s.pipSize);
+   m.tpPips = AiSafeDiv(tpDist, s.pipSize);
+   if(m.sl > 0.0 && (m.sl - m.open) * l.side < 0.0)
+      m.rr = AiSafeDiv(tpDist, slDist);
+
+   // Checks, most basic first. The first problem is the one shown.
+   if(cfg.requireSL && m.sl <= 0.0)
+     {
+      m.err = "Set a stop loss";
+      return;
+     }
+   if(cfg.requireTP && m.tp <= 0.0)
+     {
+      m.err = "Set a take profit";
+      return;
+     }
+   string chk = AiCheckModify(s, l, m.open, m.sl, m.tp, tick.bid, tick.ask);
+   if(chk != "")
+     {
+      m.err = chk;
+      return;
+     }
+   double riskPct = -m.slPct;
+   if(m.sl > 0.0 && cfg.maxRiskPct > 0.0 && riskPct > cfg.maxRiskPct + 1e-9)
+     {
+      string capTxt = "Risk " + DoubleToString(riskPct, 2) + "% is above your " + AiTrimZeros(DoubleToString(cfg.maxRiskPct, 2)) + "% safety cap";
+      if(AiModCapBlocks(cfg.maxRiskPct, riskPct, -m.slMoney, -m.oldSlMoney, l.sl > 0.0))
+        {
+         m.err = capTxt;
+         return;
+        }
+      m.warn = capTxt;
+     }
+   m.valid = m.changed;
+  }
+
 #endif
