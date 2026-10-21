@@ -3,6 +3,8 @@
 *.mq5 text eol=crlf
 *.mqh text eol=crlf
 *.ps1 text eol=crlf
+# Shell scripts keep LF everywhere: Bash stops at a CR.
+*.sh text eol=lf
 
 # Compiled MQL5 programs
 *.ex5 binary
