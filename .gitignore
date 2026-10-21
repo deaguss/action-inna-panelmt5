@@ -1,0 +1,21 @@
+# Compiled programs and MetaEditor logs
+*.ex5
+*.log
+
+# Build output and the EA's runtime files (linked into MQL5\Files\ActionInna)
+build/
+runtime/
+anti-slop/
+
+# This PC's MT5 paths, written by scripts/link-mt5.ps1
+mt5.local.json
+
+# Claude Code settings for this PC only
+.claude/settings.local.json
+
+# Editor files generated on this PC (MQL clangd extension, VS Code); they hold local paths
+.vscode/
+.clangd
+.clang-format
+compile_commands.json
+.mql-auto-forwards/

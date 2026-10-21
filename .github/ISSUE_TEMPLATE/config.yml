@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Wrong or unexpected order (security)
+    url: https://github.com/deaguss/action-inna-panelmt5/security/advisories/new
+    about: Report orders sent without confirmation or with the wrong volume, SL or TP privately.

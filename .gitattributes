@@ -1,0 +1,8 @@
+# Text files are stored with LF; MQL5 sources check out with CRLF, as MetaEditor writes them.
+* text=auto
+*.mq5 text eol=crlf
+*.mqh text eol=crlf
+*.ps1 text eol=crlf
+
+# Compiled MQL5 programs
+*.ex5 binary

@@ -1,0 +1,41 @@
+# MQL5 can only be compiled by MetaEditor inside an MT5 install, so CI checks what it can without one.
+# Compiling and the test script stay part of every pull request (see CONTRIBUTING.md).
+name: checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  repository:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MQL5 and PowerShell sources are ASCII only
+        run: |
+          if LC_ALL=C grep -rnP --include='*.mq5' --include='*.mqh' --include='*.ps1' '[^\x00-\x7F]' mql5 scripts; then
+            echo "::error::Non-ASCII characters found (MetaEditor and Windows PowerShell 5.1 may misread them)."
+            exit 1
+          fi
+
+      - name: No compiled programs or local files are tracked
+        run: |
+          if git ls-files | grep -E '\.ex5$|\.log$|^build/|^runtime/|mt5\.local\.json$'; then
+            echo "::error::Compiled programs, logs or this PC's files are tracked."
+            exit 1
+          fi
+
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem -Path scripts -Filter *.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
+            foreach ($e in $errors) {
+              Write-Host "::error file=scripts/$($file.Name),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
