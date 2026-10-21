@@ -18,8 +18,23 @@ All notable changes to ActionInna are recorded here. The format follows
   when the risk goes up.
 - Input "Drag open trades with a confirm pop-up" (on by default). MT5's own trade lines come back when
   it is off or the EA is removed.
-- Tests: worked examples and a generated suite that checks changes to open trades against a
-  whole-point reference.
+- Tests: worked examples and generated suites for changes to open trades (against a whole-point
+  reference, entry moves, and 2,000 changes on the chart's symbol with live prices); about 114,000
+  scenarios per round.
+- Native tests (`tests/native/run.sh`): the same sources compiled with g++ against a fake MT5, with
+  drag-and-confirm scenarios and a random fuzz that checks every request the fake server receives.
+
+### Fixed
+
+- Symbol data (stops and freeze levels) is read again right before an order or a change is sent. The
+  timer reads it once a second, so a broker change within that second could let a request through
+  that the server would refuse.
+- A line dragged while an order or change was being sent (and so not taken) went back to its place
+  only when its value changed; it now goes back when the mouse is released.
+
+### Changed
+
+- The test report no longer records the broker's server name.
 
 ## [1.0.0] - 2026-10-21
 

@@ -235,7 +235,7 @@ public:
       for(int i = 0; i < 3; i++)
         {
          string n = LineName(i);
-         if(ObjectFind(0, n) < 0 || ObjectGetInteger(0, n, OBJPROP_TIMEFRAMES) == OBJ_NO_PERIODS)
+         if(m_set[i] < 0.0 || ObjectFind(0, n) < 0 || ObjectGetInteger(0, n, OBJPROP_TIMEFRAMES) == OBJ_NO_PERIODS)
             continue;
          double p = ObjectGetDouble(0, n, OBJPROP_PRICE);
          if(p <= 0.0)
@@ -251,9 +251,12 @@ public:
       return false;
      }
 
+   // Lines are written again on the next Sync, so a drag that was not taken (during the pause
+   // after sending) does not leave a line where it was dropped.
    void              EndDrag()
      {
       m_drag = -1;
+      ArrayInitialize(m_set, -1.0);
      }
 
    void              Sync(const AiPlan &p, const AiSpec &s, const AiTheme &th, const bool show, const bool zones, const bool tagsLeft, const int chartW, const int chartH, CAiUi &ui, const string cur)

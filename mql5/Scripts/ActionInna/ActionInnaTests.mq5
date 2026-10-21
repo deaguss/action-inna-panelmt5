@@ -1,8 +1,8 @@
 //+------------------------------------------------------------------+
 //| ActionInnaTests.mq5                                              |
 //| ActionInna's tests: worked examples, then generated scenarios    |
-//| (about 102,000 per round). Drag onto any chart; the last suite   |
-//| uses that chart's symbol with live prices and sends no orders.   |
+//| (about 114,000 per round). Drag onto any chart; the two live     |
+//| suites use that chart's symbol and prices and send no orders.    |
 //+------------------------------------------------------------------+
 #property copyright   "ActionInna, MIT licence"
 #property link        "https://github.com/deaguss/action-inna-panelmt5"
@@ -12,7 +12,7 @@
 #include "Scenarios.mqh"
 
 input uint InpSeed   = 20261021; // Seed (the same seed replays the same scenarios)
-input int  InpRounds = 1;        // Rounds (one round is about 102,000 scenarios)
+input int  InpRounds = 1;        // Rounds (one round is about 114,000 scenarios)
 
 void TestSteps()
   {
@@ -155,6 +155,35 @@ void TestModify()
    Check(!AiModCapBlocks(5.0, 6.0, 600.0, 800.0, true), "cap: tightening a stop that is still above the cap passes");
    Check(!AiModCapBlocks(5.0, 6.0, 600.0, 0.0, false), "cap: adding a stop where there was none passes");
    Check(!AiModCapBlocks(0.0, 60.0, 6000.0, 300.0, true), "cap: switched off");
+
+   double o = 1.08300;
+   double sl = 1.08100;
+   double tp = 1.08700;
+   AiMoveEntry(fx, 1.08200, o, sl, tp);
+   Check(Near(o, 1.08200, 1e-9) && Near(sl, 1.08000, 1e-9) && Near(tp, 1.08600, 1e-9), "entry move takes SL and TP along");
+   sl = 0.0;
+   AiMoveEntry(fx, 1.08400, o, sl, tp);
+   Check(Near(o, 1.08400, 1e-9) && sl == 0.0 && Near(tp, 1.08800, 1e-9), "a missing SL stays missing when the entry moves");
+   AiMoveEntry(fx, 0.0, o, sl, tp);
+   Check(Near(o, 1.08400, 1e-9) && Near(tp, 1.08800, 1e-9), "an entry of zero changes nothing");
+  }
+
+// Object names of open trades: AI_O<ticket>#<level><part>.
+void TestTradeObjectNames()
+  {
+   CAiOrderLines lines;
+   ulong t = 0;
+   int w = -1;
+   string part = "";
+   Check(lines.Parse(AI_O + "12345678#S", t, w, part) && t == (ulong)12345678 && w == 1 && part == "", "trade line name: ticket, level, line");
+   Check(lines.Parse(AI_O + "9876543210#Tb", t, w, part) && t == (ulong)9876543210 && w == 2 && part == "b", "tag name with a ticket above 2^32");
+   Check(lines.Parse(AI_O + "7#Ex", t, w, part) && t == (ulong)7 && w == 0 && part == "x", "entry tag text");
+   Check(lines.Parse(AI_O + "9#Sg", t, w, part) && w == 1 && part == "g", "server-level line");
+   Check(!lines.Parse(AI_P + "12#S", t, w, part), "panel objects are not trade objects");
+   Check(!lines.Parse(AI_O + "12#Q", t, w, part), "an unknown level is refused");
+   Check(!lines.Parse(AI_O + "#S", t, w, part), "a name without a ticket is refused");
+   Check(!lines.Parse(AI_O + "12#", t, w, part), "a name without a level is refused");
+   Check(!lines.Parse(AI_O + "0#S", t, w, part), "ticket 0 is refused");
   }
 
 void TestLots()
@@ -264,6 +293,7 @@ void OnStart()
    TestOrderTypes();
    TestStops();
    TestModify();
+   TestTradeObjectNames();
    TestLots();
    TestMemory();
    TestParsing();
@@ -276,6 +306,7 @@ void OnStart()
    SuiteResolveType(10000 * rounds);
    SuiteStopsOracle(10000 * rounds);
    SuiteModifyOracle(10000 * rounds);
+   SuiteEntryShift(10000 * rounds);
    SuiteMemoryRoundTrip(5000 * rounds);
    SuiteMemoryFuzz(5000 * rounds);
    SuiteParseNumber(10000 * rounds);
@@ -283,6 +314,7 @@ void OnStart()
    SuitePipSizes(10000 * rounds);
    SuiteMoney(5000 * rounds);
    SuiteLivePlans(2000 * rounds);
+   SuiteLiveModify(2000 * rounds);
 
    double seconds = (double)(GetMicrosecondCount() - started) / 1000000.0;
    string summary = "ActionInna tests: " + IntegerToString(g_pass + g_fail) + " checks, " + IntegerToString(g_pass) + " passed, " +
@@ -290,7 +322,7 @@ void OnStart()
                     " round" + ((rounds == 1) ? "" : "s") + ", " + DoubleToString(seconds, 1) + " s)";
    Print(summary);
    string text = TimeToString(TimeLocal(), TIME_DATE | TIME_SECONDS) + "  MT5 build " + IntegerToString(TerminalInfoInteger(TERMINAL_BUILD)) +
-                 ", " + AccountInfoString(ACCOUNT_SERVER) + ", chart " + _Symbol + "\r\n" + summary + "\r\n\r\n" + g_table;
+                 ", chart " + _Symbol + "\r\n" + summary + "\r\n\r\n" + g_table;
    if(g_report != "")
       text += "\r\nFirst failures:\r\n" + g_report;
    FolderCreate(AI_FILES_DIR, 0);

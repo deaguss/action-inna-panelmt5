@@ -7,6 +7,7 @@
 #include <ActionInna\RiskCalc.mqh>
 #include <ActionInna\Memory.mqh>
 #include <ActionInna\Hotkeys.mqh>
+#include <ActionInna\OrderLines.mqh>
 
 #define TK_MAX_DETAILS 50
 

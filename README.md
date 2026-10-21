@@ -25,7 +25,7 @@ It is an Expert Advisor (MQL5), so it runs inside MT5 with MT5's own prices and 
 **What has been tested so far:**
 
 - It compiles with 0 errors and 0 warnings in MetaEditor (MT5 desktop for Windows).
-- On an Exness demo account (hedging, USD):
+- Tried by hand in MT5 desktop:
   - a pending SELL STOP was placed through the panel, with its SL and TP;
   - Pin to new charts works, and so does reopening MT5 with the panel back on its charts;
   - the risk numbers on the panel match a hand calculation;
@@ -289,11 +289,11 @@ Panel choices (risk chip, custom values, toggles, position) are saved in
 ## 10. Test checklist (demo account first)
 
 1. Run the **ActionInnaTests** script (Navigator > Scripts > ActionInna, drag it onto any chart, press
-   OK). It runs the worked examples, then about 102,000 generated scenarios: lot sizing, rounding,
-   order types, SL/TP checks and changes to open trades against independent references, recall files
-   (including damaged ones),
-   typed numbers, hotkey names, pip sizes, money formatting, and 2,000 full order plans on the chart's
-   symbol with live prices. It sends no orders. Every suite should say "all passed". Raise **Rounds**
+   OK). It runs the worked examples, then about 114,000 generated scenarios: lot sizing, rounding,
+   order types, SL/TP checks and changes to open trades against independent references, entry moves,
+   recall files (including damaged ones), typed numbers, hotkey names, pip sizes, money formatting,
+   and 2,000 full order plans plus 2,000 changes to open trades on the chart's symbol with live
+   prices. It sends no orders. Every suite should say "all passed". Raise **Rounds**
    for more scenarios, and change **Seed** for different ones (the same seed replays the same ones).
    The report goes to `MQL5\Files\ActionInna\test-results.txt` (`runtime\test-results.txt` with the
    development set-up).
@@ -341,7 +341,21 @@ mql5/
 scripts/
   link-mt5.ps1     junctions into the MT5 data folder (-Unlink removes them)
   build.ps1        MetaEditor command-line build, logs in build\
+tests/native/
+  run.sh           the same sources compiled with g++ against a fake MT5, then every test run
+  mql.h            the fake MT5: types, strings, checked arrays, chart objects, symbol, trade server
+  mql2cpp.js       copies the sources with the few changes g++ needs (the originals are untouched)
+  suites.cpp       ActionInnaTests over several seeds and made-up symbols
+  app.cpp          drag-and-confirm scenarios and a random fuzz against the real panel code
 ```
+
+- **Native tests**, without MT5 (needs Git Bash, Node.js and g++ 9 or newer):
+  `bash tests/native/run.sh [seeds] [rounds] [fuzz runs] [fuzz seed]`. It runs ActionInnaTests on seven
+  made-up symbols, then drives the real panel code through drags, releases, clicks, typing, keys and
+  server events. Every request that reaches the fake server is checked: it must come from a Confirm,
+  pass the checks against what the server has at that moment, and keep SL and TP. It ends with
+  "native tests: all passed". It does not replace a run in MT5: MetaEditor's compiler, real prices and
+  the real server are not part of it.
 
 - Edit here, run `scripts\build.ps1`, then restart MT5 or drag the EA onto the chart again: a chart
   keeps running the old code until the EA is loaded again. You can also press F7 in MetaEditor: the

@@ -318,6 +318,38 @@ void SuiteModifyOracle(const int n)
    Row(suite, cases, fails);
   }
 
+// Moving a pending order's entry keeps its SL and TP the same number of ticks away, on the tick
+// grid, and never adds a level the order did not have. A level pushed to zero or below is dropped.
+void SuiteEntryShift(const int n)
+  {
+   string suite = "Entry moves that take SL and TP along";
+   int fails = 0;
+   for(int i = 0; i < n; i++)
+     {
+      AiSpec s;
+      RandomSpec(s);
+      double tick = s.tickSize;
+      int openT = RndInt(1000, 2000000);
+      int slT = RndChance(5) ? 0 : openT + RndInt(-400, 400);
+      int tpT = RndChance(5) ? 0 : openT + RndInt(-400, 400);
+      int newT = openT + (RndChance(4) ? RndInt(-1500, -800) : RndInt(-900, 900));
+      if(newT <= 0)
+         newT = 1;
+      int d = newT - openT;
+      double open = openT * tick;
+      double sl = slT * tick;
+      double tp = tpT * tick;
+      AiMoveEntry(s, newT * tick, open, sl, tp);
+      double expSl = (slT == 0 || slT + d <= 0) ? 0.0 : (slT + d) * tick;
+      double expTp = (tpT == 0 || tpT + d <= 0) ? 0.0 : (tpT + d) * tick;
+      bool ok = Near(open, newT * tick, tick * 0.01) && Near(sl, expSl, tick * 0.01) && Near(tp, expTp, tick * 0.01);
+      if(!Expect(ok, fails))
+         Detail(suite, "tick " + D(tick) + ", entry " + IntegerToString(openT) + " -> " + IntegerToString(newT) + " ticks, SL " + IntegerToString(slT) +
+                ", TP " + IntegerToString(tpT) + " gave entry " + D(open) + ", SL " + D(sl) + ", TP " + D(tp));
+     }
+   Row(suite, n, fails);
+  }
+
 // Every remembered SL/TP survives being written to the recall file and read back.
 void SuiteMemoryRoundTrip(const int n)
   {
@@ -725,6 +757,109 @@ void SuiteLivePlans(const int n)
                 IntegerToString(in.tpMode) + "), risk " + D(in.riskValue) + " (mode " + IntegerToString(in.riskMode) + ")");
      }
    g_table += suite + ": " + IntegerToString(n) + " cases (" + IntegerToString(valid) + " sendable), " +
+              ((fails == 0) ? "all passed" : IntegerToString(fails) + " FAILED") + "\r\n";
+  }
+
+// Changes to open trades on the chart's real symbol, with live prices: random positions and
+// pending orders, levels moved anywhere, every safety setting. A change that may be sent must pass
+// every check; one that may not must say why; money, R:R and the safety cap must agree.
+void SuiteLiveModify(const int n)
+  {
+   string suite = "Changes to open trades on " + _Symbol + " (live prices)";
+   AiSpec s;
+   MqlTick tick;
+   if(!AiLoadSpec(_Symbol, AI_PIP_TRADER, s) || !SymbolInfoTick(_Symbol, tick) || tick.bid <= 0.0 || tick.ask <= 0.0)
+     {
+      g_table += suite + ": skipped, no symbol data or prices\r\n";
+      return;
+     }
+   AiSettings cfg;
+   ZeroMemory(cfg);
+   int fails = 0;
+   int valid = 0;
+   int cases = 0;
+   for(int i = 0; i < n; i++)
+     {
+      cfg.maxRiskPct = RndChance(4) ? 0.0 : RndRange(0.5, 10.0);
+      cfg.requireSL = !RndChance(4);
+      cfg.requireTP = !RndChance(4);
+      cfg.commissionRT = RndChance(3) ? RndRange(0.0, 10.0) : 0.0;
+      double base = RndRange(100.0, 100000.0);
+      int side = RndChance(2) ? AI_BUY : AI_SELL;
+      bool buy = (side == AI_BUY);
+      double market = buy ? tick.ask : tick.bid;
+      AiLive l;
+      ZeroMemory(l);
+      l.ticket = 1;
+      l.side = side;
+      l.lots = s.volMin * RndInt(1, 100);
+      l.isOrder = RndChance(2);
+      l.open = AiNormPrice(s, MathMax(s.tickSize, market + RndRange(-300.0, 300.0) * s.pipSize));
+      if(l.isOrder)
+        {
+         bool okType = false;
+         l.type = AiResolveType(side, true, l.open, tick.bid, tick.ask, okType);
+         if(!okType)
+            continue;   // an order exactly at the market has no type
+        }
+      else
+         l.type = buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+      l.sl = RndChance(5) ? 0.0 : AiNormPrice(s, MathMax(s.tickSize, l.open - side * RndRange(-50.0, 300.0) * s.pipSize));
+      l.tp = RndChance(5) ? 0.0 : AiNormPrice(s, MathMax(s.tickSize, l.open + side * RndRange(-50.0, 600.0) * s.pipSize));
+      double open = l.open;
+      double sl = l.sl;
+      double tp = l.tp;
+      int pick = RndInt(0, 4);
+      if(pick == 0 && l.isOrder)
+         AiMoveEntry(s, MathMax(s.tickSize, l.open + RndRange(-300.0, 300.0) * s.pipSize), open, sl, tp);
+      else if(pick == 1)
+         sl = RndChance(10) ? 0.0 : MathMax(s.tickSize, market - side * RndRange(-100.0, 400.0) * s.pipSize);
+      else if(pick == 2)
+         tp = RndChance(10) ? 0.0 : MathMax(s.tickSize, market + side * RndRange(-100.0, 800.0) * s.pipSize);
+      else if(pick == 3)
+        {
+         sl = MathMax(s.tickSize, market - side * RndRange(-100.0, 400.0) * s.pipSize);
+         tp = MathMax(s.tickSize, market + side * RndRange(-100.0, 800.0) * s.pipSize);
+        }
+      AiModPlan m;
+      AiBuildModPlan(s, l, open, sl, tp, cfg, tick, base, m);
+      cases++;
+      double eps = s.point * 0.5;
+      double comm = cfg.commissionRT * l.lots;
+      bool slLoss = (m.sl > 0.0 && (m.sl - m.open) * side < 0.0);
+      string check = AiCheckModify(s, l, m.open, m.sl, m.tp, tick.bid, tick.ask);
+      string why = "";
+      if(!l.isOrder && MathAbs(m.open - l.open) > eps)
+         why = "a position's open price moved";
+      else if(MathAbs(m.open - AiNormPrice(s, m.open)) > eps || MathAbs(m.sl - AiNormPrice(s, m.sl)) > eps || MathAbs(m.tp - AiNormPrice(s, m.tp)) > eps)
+         why = "a level is off the tick grid";
+      else if(m.valid && (!m.changed || m.err != ""))
+         why = "a change that may be sent is unchanged or carries an error";
+      else if(m.valid && check != "")
+         why = "a change that may be sent fails the checks: " + check;
+      else if(m.valid && ((cfg.requireSL && m.sl <= 0.0) || (cfg.requireTP && m.tp <= 0.0)))
+         why = "a change that may be sent lacks a required level";
+      else if(!m.valid && m.changed && m.err == "")
+         why = "a refused change does not say why";
+      else if(m.sl > 0.0 && comm == 0.0 && (slLoss ? m.slMoney > 1e-9 : m.slMoney < -1e-9))
+         why = "the money at the stop has the wrong sign";
+      else if(m.tp > 0.0 && comm == 0.0 && ((m.tp - m.open) * side > 0.0 ? m.tpMoney < -1e-9 : m.tpMoney > 1e-9))
+         why = "the money at the target has the wrong sign";
+      else if(MathAbs(m.slPct - AiSafeDiv(m.slMoney, base) * 100.0) > 1e-6 || MathAbs(m.tpPct - AiSafeDiv(m.tpMoney, base) * 100.0) > 1e-6)
+         why = "a % does not match its money";
+      else if(m.rr > 0.0 && !slLoss)
+         why = "R:R shown for a stop at break-even or better";
+      else if(slLoss && m.tp > 0.0 && (m.tp - m.open) * side > 0.0 && MathAbs(m.rr - MathAbs(m.tp - m.open) / MathAbs(m.open - m.sl)) > 1e-6)
+         why = "R:R does not match the distances";
+      else if(m.valid && cfg.maxRiskPct > 0.0 && m.sl > 0.0 && -m.slPct > cfg.maxRiskPct + 1e-9 && l.sl > 0.0 && -m.slMoney > -m.oldSlMoney + 0.01)
+         why = "the safety cap let a bigger risk through";
+      if(m.valid)
+         valid++;
+      if(!Expect(why == "", fails))
+         Detail(suite, why + " | " + (l.isOrder ? AiOrderTypeName(l.type) : (buy ? "buy position" : "sell position")) + " open " + D(l.open) +
+                " SL " + D(l.sl) + " TP " + D(l.tp) + " -> open " + D(m.open) + " SL " + D(m.sl) + " TP " + D(m.tp) + ", err \"" + m.err + "\"");
+     }
+   g_table += suite + ": " + IntegerToString(cases) + " cases (" + IntegerToString(valid) + " sendable), " +
               ((fails == 0) ? "all passed" : IntegerToString(fails) + " FAILED") + "\r\n";
   }
 

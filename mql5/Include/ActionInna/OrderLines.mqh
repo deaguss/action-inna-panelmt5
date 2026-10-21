@@ -304,7 +304,7 @@ public:
          for(int i = 0; i < 3; i++)
            {
             string name = Base(m_objs[k].ticket) + LevelKey(i);
-            if(ObjectFind(0, name) < 0 || ObjectGetInteger(0, name, OBJPROP_SELECTABLE) == 0)
+            if(m_objs[k].written[i] < 0.0 || ObjectFind(0, name) < 0 || ObjectGetInteger(0, name, OBJPROP_SELECTABLE) == 0)
                continue;
             double p = ObjectGetDouble(0, name, OBJPROP_PRICE);
             if(p <= 0.0 || MathAbs(p - m_objs[k].written[i]) <= m_tick * 0.5)
@@ -319,10 +319,16 @@ public:
       return false;
      }
 
+   // The drag is over, taken or not. Every line is written again on the next Sync, so a line the
+   // app did not take (dropped while an order was being sent, say) does not stay where it was left.
    void              EndDrag()
      {
       m_dragTicket = 0;
       m_dragWhich = -1;
+      int n = ArraySize(m_objs);
+      for(int k = 0; k < n; k++)
+         for(int i = 0; i < 3; i++)
+            m_objs[k].written[i] = -1.0;
      }
 
    // Splits an object name into its trade and level. part is "" for a line, "b" or "x" for a tag.

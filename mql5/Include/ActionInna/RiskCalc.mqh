@@ -500,6 +500,20 @@ string AiCheckModify(const AiSpec &s, const AiLive &l, const double open, const 
    return "";
   }
 
+// Moves a pending order's entry and takes its stop and target along by the same distance, so the
+// money at risk stays the same. A missing level stays missing.
+void AiMoveEntry(const AiSpec &s, const double newOpen, double &open, double &sl, double &tp)
+  {
+   if(newOpen <= 0.0)
+      return;
+   double d = newOpen - open;
+   open = newOpen;
+   if(sl > 0.0)
+      sl = AiNormPrice(s, sl + d);
+   if(tp > 0.0)
+      tp = AiNormPrice(s, tp + d);
+  }
+
 // The safety cap blocks a change that takes the risk above it and makes it bigger. Tightening a
 // stop, or adding one where there was none, always goes through.
 bool AiModCapBlocks(const double cap, const double riskPct, const double newRisk, const double oldRisk, const bool hadStop)

@@ -19,3 +19,6 @@ mt5.local.json
 .clang-format
 compile_commands.json
 .mql-auto-forwards/
+
+# Native test build (tests/native/run.sh)
+tests/native/out/

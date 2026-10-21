@@ -661,6 +661,8 @@ private:
          return;
         }
       double seenRisk = m_plan.riskMoney;
+      // The timer reloads symbol data once a second; the checks before sending use the newest.
+      AiLoadSpec(_Symbol, (int)cfg.pipMode, m_spec);
       m_phase = AI_PHASE_SENDING;
       Draw(true);   // show "Sending..." before OrderSend blocks
       AiSendResult r;
@@ -801,12 +803,7 @@ private:
         {
          if(!m_modLive.isOrder || price <= 0.0)
             return;
-         double d = price - m_modOpen;
-         m_modOpen = price;
-         if(m_modSl > 0.0)
-            m_modSl = AiNormPrice(m_spec, m_modSl + d);
-         if(m_modTp > 0.0)
-            m_modTp = AiNormPrice(m_spec, m_modTp + d);
+         AiMoveEntry(m_spec, price, m_modOpen, m_modSl, m_modTp);
         }
       else if(which == 1)
          m_modSl = price;
@@ -921,7 +918,9 @@ private:
          return;
       if(AiNowMs() - m_modSince < 300)
          return;
-      // Fresh prices and the trade as the server has it now; if it moved, the card shows that first.
+      // Fresh symbol data (the broker can change its stops and freeze levels), fresh prices and the
+      // trade as the server has it now; if the trade moved, the card shows that first.
+      AiLoadSpec(_Symbol, (int)cfg.pipMode, m_spec);
       if(RebuildMod() || !m_modOn)
          return;
       if(!m_mod.valid)
@@ -1217,17 +1216,14 @@ private:
             SaveSettings();
             Refresh(true);
            }
-         if(m_lineDrag)
-           {
-            m_lineDrag = false;
-            m_lines.EndDrag();
-            Refresh(true);
-           }
+         // Every release ends a drag, taken or not: the lines are written again from what they
+         // should show, so one dropped while an order was being sent goes back to its place.
          if(m_orderDrag)
-           {
             DropOrderLine();
-            Refresh(true);
-           }
+         m_lineDrag = false;
+         m_lines.EndDrag();
+         m_orders.EndDrag();
+         Refresh(true);
          return;
         }
       if(!down)
