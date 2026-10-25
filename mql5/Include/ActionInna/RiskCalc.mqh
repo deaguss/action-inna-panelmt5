@@ -214,6 +214,25 @@ double AiOpenVolume(const string symbol, const int side)
    return v;
   }
 
+// True when this hedging account refuses a position opposite one already open on the symbol
+// (opposite positions not allowed, as at brokers under US rules). A netting account merges the
+// order into its position instead, which the panel warns about separately.
+bool AiOppositeBlocked(const string symbol, const int side)
+  {
+   if(AccountInfoInteger(ACCOUNT_MARGIN_MODE) != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING || AccountInfoInteger(ACCOUNT_HEDGE_ALLOWED) != 0)
+      return false;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || PositionGetString(POSITION_SYMBOL) != symbol)
+         continue;
+      long pt = PositionGetInteger(POSITION_TYPE);
+      if((side == AI_BUY && pt == POSITION_TYPE_SELL) || (side == AI_SELL && pt == POSITION_TYPE_BUY))
+         return true;
+     }
+   return false;
+  }
+
 // Builds the plan. Entry, SL and TP are filled even when a check fails, so the preview lines
 // stay where the trader put them and can be dragged back.
 void AiBuildPlan(const AiSpec &s, const AiInput &in, const AiSettings &cfg, const MqlTick &tick, AiPlan &p)
@@ -400,6 +419,17 @@ void AiBuildPlan(const AiSpec &s, const AiInput &in, const AiSettings &cfg, cons
       p.err = mode;
       return;
      }
+   if(AiOppositeBlocked(s.symbol, in.side))
+     {
+      string other = buy ? "SELL" : "BUY";
+      if(!in.pending)
+        {
+         p.err = "This account allows no opposite positions: close the " + other + " on " + s.symbol + " first";
+         return;
+        }
+      if(p.warn == "")
+         p.warn = "This account allows no opposite positions: the order is refused if it fills while the " + other + " is open";
+     }
    if(cfg.maxRiskPct > 0.0 && p.riskPct > cfg.maxRiskPct + 1e-9)
      {
       p.err = "Risk " + DoubleToString(p.riskPct, 2) + "% is above your " + AiTrimZeros(DoubleToString(cfg.maxRiskPct, 2)) + "% safety cap";
@@ -512,6 +542,35 @@ void AiMoveEntry(const AiSpec &s, const double newOpen, double &open, double &sl
       sl = AiNormPrice(s, sl + d);
    if(tp > 0.0)
       tp = AiNormPrice(s, tp + d);
+  }
+
+// Where a market order's SL and TP go when it fills at 'fill' instead of 'planned' (slippage):
+//   AI_SLIP_FOLLOW: an SL in pips keeps its distance from the fill, so the money at risk stays as
+//     planned; a TP in pips keeps its distance, a TP in R becomes R stop distances from the fill;
+//     a level set as a price stays where the trader put it.
+//   AI_SLIP_KEEP_RISK: both move with the fill, whatever their mode.
+//   AI_SLIP_KEEP_PRICES: neither moves.
+// True when a level moves by a tick or more.
+bool AiFollowFill(const AiSpec &s, const int policy, const int side, const double planned, const double fill, const int slMode,
+                  const int tpMode, const double tpR, const double sl, const double tp, double &newSl, double &newTp)
+  {
+   newSl = sl;
+   newTp = tp;
+   if(policy == AI_SLIP_KEEP_PRICES || planned <= 0.0 || fill <= 0.0)
+      return false;
+   double d = fill - planned;
+   bool all = (policy == AI_SLIP_KEEP_RISK);
+   if(sl > 0.0 && (all || slMode != AI_LEVEL_PRICE))
+      newSl = AiNormPrice(s, sl + d);
+   if(tp > 0.0)
+     {
+      if(all || tpMode == AI_LEVEL_PIPS)
+         newTp = AiNormPrice(s, tp + d);
+      else if(tpMode == AI_LEVEL_RR && tpR > 0.0 && newSl > 0.0 && (fill - newSl) * side > 0.0)
+         newTp = AiNormPrice(s, fill + side * tpR * (fill - newSl) * side);
+     }
+   double half = MathMax(s.tickSize, s.point) * 0.5;
+   return (MathAbs(newSl - sl) >= half || MathAbs(newTp - tp) >= half);
   }
 
 // The safety cap blocks a change that takes the risk above it and makes it bigger. Tightening a

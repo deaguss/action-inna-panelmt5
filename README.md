@@ -16,6 +16,9 @@ sits on the chart in place of MT5's One-Click panel:
 - **Change open trades with a confirm pop-up**, as on Exness. Drag the SL, TP or entry line of an open
   position or pending order and a card shows the new prices and money. Nothing changes until you press
   Confirm. (With MT5's own trade lines, a drag can change the order the moment you let go.)
+- **Slippage handled the way you set the stop**: when a market order fills at another price, an SL in
+  pips (and a TP in pips or R) moves with the fill, so the money at risk stays as planned. A level set
+  as a price stays, and the panel says what the stop now risks.
 - **Recall of earlier SL/TP** per symbol, like Exness's "Set SL/TP automatically".
 - **Hotkeys** for the presets, buy/sell preview, confirm and cancel.
 - **Stays put**: MT5 reopens it with your charts. "Pin to new charts" puts it on every new chart too.
@@ -30,9 +33,14 @@ It is an Expert Advisor (MQL5), so it runs inside MT5 with MT5's own prices and 
   - Pin to new charts works, and so does reopening MT5 with the panel back on its charts;
   - the risk numbers on the panel match a hand calculation;
   - an open position's SL and TP were changed by dragging their lines and confirming on the card.
+- Without MT5, the native tests (section 11) run the panel's checks and orders against nine broker
+  set-ups in a fake MT5 whose server applies each set-up's rules: hedging and netting accounts,
+  accounts without opposite positions or with first-in-first-out closes, market, instant, request and
+  exchange execution, limited filling and expiry modes, symbols that take no stop orders or no SL/TP,
+  symbol names with prefixes and suffixes, and USD, EUR, JPY and cent accounts.
 - Not yet tried: market orders through the panel, dragging a pending order's entry, the rest of the
-  checklist in section 10, other brokers, and MT5 on Mac or Linux. If you run it there, open an issue
-  with what you saw.
+  checklist in section 10, real brokers other than Exness, and MT5 on Mac or Linux. If you run it
+  there, open an issue with what you saw.
 
 The test script and how to run it are in section 10.
 
@@ -224,10 +232,64 @@ CONFIRM stays disabled, and the status line says why, when any of these holds:
 | Convention | EURUSD | USDJPY | XAUUSD | A $5 move on gold |
 |---|---|---|---|---|
 | Trader (default) | 0.0001 | 0.01 | 0.1 | 50 pips |
-| Exness (1 pip = 10 points everywhere) | 0.0001 | 0.01 | 0.01 | 500 pips |
+| 10 points (1 pip = 10 points everywhere, as Exness counts) | 0.0001 | 0.01 | 0.01 | 500 pips |
 | Points | 1 point | 1 point | 1 point | 5,000 points (3-digit gold) |
 
 The lot size and money do not depend on the convention, only the pip numbers do.
+
+### Slippage
+
+A market order fills at the price the broker has when the order arrives, which can differ from the
+price in the preview. Most accounts use market execution, where MT5 ignores the "Max slippage"
+input. On instant and request execution a price that moved too far comes back as a requote, and
+ActionInna tries again at the new price, up to three times. In every mode it refuses to send an order
+whose risk grew more than 5% since the preview.
+
+The order always goes out with its SL and TP. When it fills a tick or more away from the planned
+entry, the input "When a market order fills at another price" decides what happens next:
+
+| Choice | SL | TP | Money at risk |
+|---|---|---|---|
+| Follow the SL mode (default) | In pips: moves with the fill. As a price: stays | In pips: moves with the fill. In R: R stop distances from the fill. As a price: stays | As planned with an SL in pips, otherwise changed by the slippage |
+| Keep SL and TP where they were set | Stays | Stays | Changed by the slippage |
+| Move SL and TP with the fill | Moves | Moves | As planned |
+
+Moving a level is a second request, checked like any change to an open trade (stops and freeze
+levels). If it can't be sent, the order keeps the SL and TP it was sent with. The status line says
+what happened, for example:
+
+- `Filled 3.0 pips worse. SL/TP moved: risk $100.00 as planned`
+- `Filled 3.0 pips worse. SL kept, TP moved: risk $115.00 (plan $100.00)`
+
+Example: EURUSD, $10,000 equity, 1% with a 20-pip stop is 0.50 lots and $100. The BUY fills 3 pips
+above the preview's ask:
+
+- With the SL in pips, it moves up 3 pips and still risks $100.
+- With the SL set as a price, it stays, so the stop is now 23 pips away and risks $115.
+
+Other cases:
+
+- On a netting account, an order that joins an open position leaves that position's SL/TP alone.
+- Pending orders aren't touched: a limit fills at its price or better, and a stop fills at the next
+  price with the SL and TP it was given.
+
+### Other brokers
+
+ActionInna reads from MT5, at run time, everything that differs between brokers:
+- the symbol: digits, tick size, lot limits and step, stops and freeze levels
+- what the symbol allows: order types, filling modes, expiry types, SL and TP
+- how MT5 executes it: market, instant, request or exchange
+- the account: hedging or netting, whether opposite positions are allowed, the decimals of its currency
+
+What that means in practice:
+
+- **Symbol names.** Gold counts as gold under any name with XAU or GOLD in it (`#XAUUSD`, `XAUUSD.r`,
+  `GOLDm`), or when its base currency is XAU.
+- **Netting accounts.** An order merges with the symbol's open position. The panel warns before you
+  confirm.
+- **Accounts without opposite positions** (common under US rules). An order against an open position
+  is refused on the panel, with the reason, before it reaches the broker.
+- **Currencies.** Money shows with the account currency's decimals: `$1,234.50`, `1,235 JPY`.
 
 ## 7. Working alongside other EAs and trade guards
 
@@ -254,7 +316,8 @@ The lot size and money do not depend on the convention, only the pip numbers do.
 | | New pending order distance | 10 pips |
 | Execution | One-click trading | off |
 | | Magic number | 0 (manual trade) |
-| | Max slippage | 10 points (instant execution only) |
+| | Max slippage | 10 points (instant and request execution only) |
+| | When a market order fills at another price | Follow the SL mode (section 6, Slippage) |
 | | Order comment | ActionInna |
 | | Drag open trades with a confirm pop-up | on (replaces MT5's own trade lines on this chart) |
 | Hotkeys | Keys, see section 5 | |
@@ -284,13 +347,16 @@ Panel choices (risk chip, custom values, toggles, position) are saved in
 | One-Click panel missing after MT5 crashed | Right-click the chart > One Click Trading (Alt+T) |
 | MT5's own trade lines are gone from the chart | ActionInna draws its own while it runs (section 4). They come back when the EA is removed. After a crash: F8 > Show > Show trade levels |
 | Too close to the market to change (freeze level) | The broker freezes a level or order this close to the price. Wait for the price to move away |
+| This account allows no opposite positions | Close the opposite position on this symbol first |
+| Filled ... pips worse. SL/TP not moved | The slippage move could not be sent (often the freeze level). The order kept the SL and TP it was sent with; the log says why |
 | Anything else | The log: `MQL5\Files\ActionInna\log.txt` (with the dev set-up: `runtime\log.txt` here) |
 
 ## 10. Test checklist (demo account first)
 
 1. Run the **ActionInnaTests** script (Navigator > Scripts > ActionInna, drag it onto any chart, press
-   OK). It runs the worked examples, then about 114,000 generated scenarios: lot sizing, rounding,
+   OK). It runs the worked examples, then about 124,000 generated scenarios: lot sizing, rounding,
    order types, SL/TP checks and changes to open trades against independent references, entry moves,
+   SL/TP after slippage,
    recall files (including damaged ones), typed numbers, hotkey names, pip sizes, money formatting,
    and 2,000 full order plans plus 2,000 changes to open trades on the chart's symbol with live
    prices. It sends no orders. Every suite should say "all passed". Raise **Rounds**
@@ -331,7 +397,8 @@ mql5/
     Panel.mqh        panel layout
     PreviewLines.mqh lines, zones and price tags on the chart
     OrderLines.mqh   lines of open trades, whose drags go to the modify card
-    Executor.mqh     permissions, filling modes, OrderSend
+    Trades.mqh       open positions and pending orders as the panel reads them
+    Executor.mqh     permissions, filling modes, OrderSend, SL/TP after slippage
     ChartGuard.mqh   chart settings changed while the EA runs, and their restore
     Hotkeys.mqh, Ui.mqh, Util.mqh, Defines.mqh
   Scripts/ActionInna/
@@ -343,19 +410,22 @@ scripts/
   build.ps1        MetaEditor command-line build, logs in build\
 tests/native/
   run.sh           the same sources compiled with g++ against a fake MT5, then every test run
-  mql.h            the fake MT5: types, strings, checked arrays, chart objects, symbol, trade server
+  mql.h            the fake MT5: types, strings, checked arrays, chart objects, symbol, and a trade
+                   server that applies a broker's rules (filling, expiry, order types, netting, ...)
   mql2cpp.js       copies the sources with the few changes g++ needs (the originals are untouched)
-  suites.cpp       ActionInnaTests over several seeds and made-up symbols
-  app.cpp          drag-and-confirm scenarios and a random fuzz against the real panel code
+  brokers.h        the symbols and the nine broker set-ups every test runs against
+  suites.cpp       ActionInnaTests over several seeds and made-up symbols, then at every broker set-up
+  app.cpp          drag-and-confirm, slippage and broker scenarios, and a random fuzz against the real panel code
 ```
 
 - **Native tests**, without MT5 (needs Git Bash, Node.js and g++ 9 or newer):
   `bash tests/native/run.sh [seeds] [rounds] [fuzz runs] [fuzz seed]`. It runs ActionInnaTests on seven
-  made-up symbols, then drives the real panel code through drags, releases, clicks, typing, keys and
-  server events. Every request that reaches the fake server is checked: it must come from a Confirm,
-  pass the checks against what the server has at that moment, and keep SL and TP. It ends with
-  "native tests: all passed". It does not replace a run in MT5: MetaEditor's compiler, real prices and
-  the real server are not part of it.
+  made-up symbols, then the live suites at nine broker set-ups (`tests/native/brokers.h`), then drives
+  the real panel code through drags, releases, clicks, typing, keys and server events, at every set-up.
+  Every request that reaches the fake server is checked: it must come from a Confirm, pass the checks
+  against what the server has at that moment, keep SL and TP, and be one that set-up's server accepts.
+  It ends with "native tests: all passed". CI runs it on every push. It does not replace a run in MT5:
+  MetaEditor's compiler, real prices and the real server are not part of it.
 
 - Edit here, run `scripts\build.ps1`, then restart MT5 or drag the EA onto the chart again: a chart
   keeps running the old code until the EA is loaded again. You can also press F7 in MetaEditor: the

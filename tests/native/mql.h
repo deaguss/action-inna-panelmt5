@@ -165,24 +165,31 @@ enum ENUM_ORDER_TYPE_TIME { ORDER_TIME_GTC, ORDER_TIME_DAY, ORDER_TIME_SPECIFIED
 enum ENUM_TRADE_REQUEST_ACTIONS { TRADE_ACTION_DEAL = 1, TRADE_ACTION_PENDING = 5, TRADE_ACTION_SLTP = 6, TRADE_ACTION_MODIFY = 7,
                                   TRADE_ACTION_REMOVE = 8 };
 const uint TRADE_RETCODE_REQUOTE = 10004, TRADE_RETCODE_PLACED = 10008, TRADE_RETCODE_DONE = 10009, TRADE_RETCODE_DONE_PARTIAL = 10010,
-           TRADE_RETCODE_INVALID = 10013, TRADE_RETCODE_INVALID_STOPS = 10016, TRADE_RETCODE_PRICE_CHANGED = 10020,
-           TRADE_RETCODE_PRICE_OFF = 10021, TRADE_RETCODE_NO_CHANGES = 10025, TRADE_RETCODE_INVALID_FILL = 10030;
+           TRADE_RETCODE_INVALID = 10013, TRADE_RETCODE_INVALID_VOLUME = 10014, TRADE_RETCODE_INVALID_PRICE = 10015,
+           TRADE_RETCODE_INVALID_STOPS = 10016, TRADE_RETCODE_TRADE_DISABLED = 10017, TRADE_RETCODE_PRICE_CHANGED = 10020,
+           TRADE_RETCODE_PRICE_OFF = 10021, TRADE_RETCODE_INVALID_EXPIRATION = 10022, TRADE_RETCODE_NO_CHANGES = 10025,
+           TRADE_RETCODE_FROZEN = 10029, TRADE_RETCODE_INVALID_FILL = 10030, TRADE_RETCODE_INVALID_ORDER = 10035,
+           TRADE_RETCODE_LONG_ONLY = 10042, TRADE_RETCODE_SHORT_ONLY = 10043, TRADE_RETCODE_CLOSE_ONLY = 10044,
+           TRADE_RETCODE_FIFO_CLOSE = 10045, TRADE_RETCODE_HEDGE_PROHIBITED = 10046;
 
 enum { SYMBOL_DIGITS = 1, SYMBOL_TRADE_STOPS_LEVEL, SYMBOL_TRADE_FREEZE_LEVEL, SYMBOL_TRADE_MODE, SYMBOL_TRADE_EXEMODE, SYMBOL_FILLING_MODE,
        SYMBOL_ORDER_MODE, SYMBOL_EXPIRATION_MODE };
+enum ENUM_SYMBOL_INFO_STRING { SYMBOL_CURRENCY_BASE = 91, SYMBOL_CURRENCY_PROFIT };
 enum ENUM_SYMBOL_INFO_DOUBLE { SYMBOL_POINT = 101, SYMBOL_TRADE_TICK_SIZE, SYMBOL_TRADE_CONTRACT_SIZE, SYMBOL_VOLUME_MIN, SYMBOL_VOLUME_MAX,
                                SYMBOL_VOLUME_STEP, SYMBOL_VOLUME_LIMIT, SYMBOL_TRADE_TICK_VALUE, SYMBOL_TRADE_TICK_VALUE_LOSS,
                                SYMBOL_TRADE_TICK_VALUE_PROFIT };
 const int SYMBOL_TRADE_MODE_DISABLED = 0, SYMBOL_TRADE_MODE_LONGONLY = 1, SYMBOL_TRADE_MODE_SHORTONLY = 2, SYMBOL_TRADE_MODE_CLOSEONLY = 3,
           SYMBOL_TRADE_MODE_FULL = 4;
-const int SYMBOL_TRADE_EXECUTION_REQUEST = 0, SYMBOL_TRADE_EXECUTION_INSTANT = 1, SYMBOL_TRADE_EXECUTION_MARKET = 2;
+const int SYMBOL_TRADE_EXECUTION_REQUEST = 0, SYMBOL_TRADE_EXECUTION_INSTANT = 1, SYMBOL_TRADE_EXECUTION_MARKET = 2,
+          SYMBOL_TRADE_EXECUTION_EXCHANGE = 3;
 const int SYMBOL_FILLING_FOK = 1, SYMBOL_FILLING_IOC = 2;
 const int SYMBOL_ORDER_MARKET = 1, SYMBOL_ORDER_LIMIT = 2, SYMBOL_ORDER_STOP = 4, SYMBOL_ORDER_STOP_LIMIT = 8, SYMBOL_ORDER_SL = 16,
           SYMBOL_ORDER_TP = 32, SYMBOL_ORDER_CLOSEBY = 64;
 const int SYMBOL_EXPIRATION_GTC = 1, SYMBOL_EXPIRATION_DAY = 2, SYMBOL_EXPIRATION_SPECIFIED = 4, SYMBOL_EXPIRATION_SPECIFIED_DAY = 8;
 
 enum { ACCOUNT_BALANCE = 201, ACCOUNT_EQUITY, ACCOUNT_MARGIN_FREE };
-enum { ACCOUNT_MARGIN_MODE = 211, ACCOUNT_TRADE_ALLOWED, ACCOUNT_TRADE_EXPERT };
+enum { ACCOUNT_MARGIN_MODE = 211, ACCOUNT_TRADE_ALLOWED, ACCOUNT_TRADE_EXPERT, ACCOUNT_HEDGE_ALLOWED, ACCOUNT_FIFO_CLOSE,
+       ACCOUNT_CURRENCY_DIGITS };
 enum { ACCOUNT_CURRENCY = 221, ACCOUNT_SERVER };
 const int ACCOUNT_MARGIN_MODE_RETAIL_NETTING = 0, ACCOUNT_MARGIN_MODE_EXCHANGE = 1, ACCOUNT_MARGIN_MODE_RETAIL_HEDGING = 2;
 enum ENUM_TERMINAL_INFO_INTEGER { TERMINAL_BUILD = 301, TERMINAL_CONNECTED, TERMINAL_TRADE_ALLOWED, TERMINAL_SCREEN_DPI,
@@ -190,7 +197,7 @@ enum ENUM_TERMINAL_INFO_INTEGER { TERMINAL_BUILD = 301, TERMINAL_CONNECTED, TERM
 enum ENUM_TERMINAL_INFO_STRING { TERMINAL_DATA_PATH = 311 };
 enum { MQL_TESTER = 321, MQL_TRADE_ALLOWED };
 
-enum { POSITION_TYPE = 401, POSITION_TIME_MSC };
+enum { POSITION_TYPE = 401, POSITION_TIME_MSC, POSITION_IDENTIFIER };
 enum { POSITION_VOLUME = 411, POSITION_PRICE_OPEN, POSITION_SL, POSITION_TP, POSITION_PROFIT, POSITION_SWAP };
 enum { POSITION_SYMBOL = 421 };
 const int POSITION_TYPE_BUY = 0, POSITION_TYPE_SELL = 1;
@@ -275,6 +282,7 @@ struct FakeSym
    int stops = 0, freeze = 0, tradeMode = SYMBOL_TRADE_MODE_FULL, exeMode = SYMBOL_TRADE_EXECUTION_MARKET;
    int filling = 3, orderMode = 127, expiration = 15;
    double bid = 1.08480, ask = 1.08500;
+   std::string base = "EUR", profit = "USD";   // SYMBOL_CURRENCY_BASE and SYMBOL_CURRENCY_PROFIT
   };
 struct FakeFile { std::string data; size_t pos = 0; std::string key; };
 
@@ -292,7 +300,13 @@ struct Fake
    FakeSym sym;
    double balance = 10000.0, equity = 10000.0, marginFree = 10000.0;
    int marginMode = ACCOUNT_MARGIN_MODE_RETAIL_HEDGING;
+   bool hedgeAllowed = true, fifo = false;  // ACCOUNT_HEDGE_ALLOWED, ACCOUNT_FIFO_CLOSE
    std::string currency = "USD";
+   int currencyDigits = 2;
+   int requotes = 0;                        // instant and request execution: requotes before each fill
+   int requotesLeft = 0;
+   double slip = 0.0;                       // market and exchange execution: a fill lands this much worse
+   std::vector<uint> refusals;              // what the server refused by its own rules (not forceRetcode)
    bool connected = true, termTrade = true, mqlTrade = true, accTrade = true, accExpert = true;
    std::vector<FakePos> pos;
    std::vector<FakeOrd> ords;
@@ -401,6 +415,10 @@ inline int64_t AccountInfoInteger(int prop)
    if(prop == ACCOUNT_MARGIN_MODE) return g_fake.marginMode;
    if(prop == ACCOUNT_TRADE_ALLOWED) return g_fake.accTrade ? 1 : 0;
    if(prop == ACCOUNT_TRADE_EXPERT) return g_fake.accExpert ? 1 : 0;
+   if(prop == ACCOUNT_HEDGE_ALLOWED) return g_fake.hedgeAllowed ? 1 : 0;
+   // MT5: "for non-hedging accounts, the property value is always false"
+   if(prop == ACCOUNT_FIFO_CLOSE) return (g_fake.fifo && g_fake.marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING) ? 1 : 0;
+   if(prop == ACCOUNT_CURRENCY_DIGITS) return g_fake.currencyDigits;
    return 0;
   }
 inline string AccountInfoString(int prop) { return string(prop == ACCOUNT_CURRENCY ? g_fake.currency : std::string("FakeServer")); }
@@ -441,6 +459,14 @@ inline double SymbolInfoDouble(const string &symbol, int prop)
       case SYMBOL_TRADE_TICK_VALUE_PROFIT: return s.tickValue;
      }
    return 0.0;
+  }
+inline string SymbolInfoString(const string &symbol, int prop)
+  {
+   const FakeSym &s = g_fake.sym;
+   if(symbol.s != s.name) return string();
+   if(prop == SYMBOL_CURRENCY_BASE) return string(s.base);
+   if(prop == SYMBOL_CURRENCY_PROFIT) return string(s.profit);
+   return string();
   }
 inline bool SymbolInfoTick(const string &symbol, MqlTick &t)
   {
@@ -487,7 +513,10 @@ inline int64_t PositionGetInteger(int prop)
   {
    if(g_fake.selPos < 0) return 0;
    const FakePos &p = g_fake.pos[g_fake.selPos];
-   return (prop == POSITION_TYPE) ? p.type : (prop == POSITION_TIME_MSC ? p.timeMsc : 0);
+   if(prop == POSITION_TYPE) return p.type;
+   if(prop == POSITION_TIME_MSC) return p.timeMsc;
+   if(prop == POSITION_IDENTIFIER) return (int64_t)p.ticket;   // the fake's tickets are the opening orders'
+   return 0;
   }
 inline double PositionGetDouble(int prop)
   {
@@ -543,15 +572,233 @@ inline double HistoryDealGetDouble(ulong, int) { return 0.0; }
 inline string HistoryDealGetString(ulong, int) { return string(); }
 inline double HistoryOrderGetDouble(ulong, int) { return 0.0; }
 
-// The fake server: applies the request to the fake trades (unless forceRetcode says otherwise).
+// The fake server checks a request the way a broker's server does before it applies it: the
+// symbol's trade mode, order types, SL/TP, expiry and filling policies (per execution mode, as MT5's
+// documentation sets them), the volume and price grids, the stops and freeze levels, opposite
+// positions where the account forbids them, first-in-first-out closes, and requotes on instant and
+// request execution. A netting account keeps one position per symbol. Written apart from
+// ActionInna's own checks, so it can catch them.
+inline bool FakeOnGrid(double v, double step)
+  {
+   if(step <= 0.0) return true;
+   double k = v / step;
+   return std::fabs(k - std::round(k)) < 1e-6;
+  }
+inline bool FakeBuyType(int type) { return type == ORDER_TYPE_BUY || type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_BUY_STOP || type == ORDER_TYPE_BUY_STOP_LIMIT; }
+inline double FakeMinDist() { return std::max(g_fake.sym.stops, 1) * g_fake.sym.point - g_fake.sym.point * 0.5; }
+
+inline uint FakeCheckFilling(const MqlTradeRequest &req)
+  {
+   const FakeSym &s = g_fake.sym;
+   // "In case of pending orders, the ORDER_FILLING_RETURN filling type should be used regardless of an execution type"
+   if(req.action == TRADE_ACTION_PENDING)
+      return (req.type_filling == ORDER_FILLING_RETURN) ? 0 : TRADE_RETCODE_INVALID_FILL;
+   bool fok = (s.filling & SYMBOL_FILLING_FOK) != 0;
+   bool ioc = (s.filling & SYMBOL_FILLING_IOC) != 0;
+   if(s.exeMode == SYMBOL_TRADE_EXECUTION_REQUEST || s.exeMode == SYMBOL_TRADE_EXECUTION_INSTANT)
+      return 0;   // FOK and IOC regardless of the symbol setting, Return always
+   if((req.type_filling == ORDER_FILLING_FOK && fok) || (req.type_filling == ORDER_FILLING_IOC && ioc))
+      return 0;
+   if(req.type_filling == ORDER_FILLING_RETURN && s.exeMode == SYMBOL_TRADE_EXECUTION_EXCHANGE)
+      return 0;   // Return is disabled in market execution only
+   return TRADE_RETCODE_INVALID_FILL;
+  }
+
+// SL and TP of a request: allowed by the symbol, on the tick grid, on the right side, far enough.
+// ref is the open price of a pending order, or 0 for a position (its levels count from the market).
+inline uint FakeCheckLevels(bool buy, double ref, double sl, double tp)
+  {
+   const FakeSym &s = g_fake.sym;
+   if(s.orderMode != 0 && ((sl > 0.0 && !(s.orderMode & SYMBOL_ORDER_SL)) || (tp > 0.0 && !(s.orderMode & SYMBOL_ORDER_TP))))
+      return TRADE_RETCODE_INVALID_STOPS;
+   if((sl > 0.0 && !FakeOnGrid(sl, s.tickSize)) || (tp > 0.0 && !FakeOnGrid(tp, s.tickSize)))
+      return TRADE_RETCODE_INVALID_STOPS;
+   double d = FakeMinDist();
+   if(ref > 0.0)
+     {
+      if(sl > 0.0 && (buy ? ref - sl : sl - ref) < d) return TRADE_RETCODE_INVALID_STOPS;
+      if(tp > 0.0 && (buy ? tp - ref : ref - tp) < d) return TRADE_RETCODE_INVALID_STOPS;
+      return 0;
+     }
+   double px = buy ? s.bid : s.ask;   // a buy closes at the bid, a sell at the ask
+   if(sl > 0.0 && (buy ? px - sl : sl - px) < d) return TRADE_RETCODE_INVALID_STOPS;
+   if(tp > 0.0 && (buy ? tp - px : px - tp) < d) return TRADE_RETCODE_INVALID_STOPS;
+   return 0;
+  }
+
+// A pending order's price: on the grid, on its side of the market, outside the stops level.
+inline uint FakeCheckPendingPrice(int type, double price)
+  {
+   const FakeSym &s = g_fake.sym;
+   if(price <= 0.0 || !FakeOnGrid(price, s.tickSize)) return TRADE_RETCODE_INVALID_PRICE;
+   bool buy = FakeBuyType(type);
+   double ref = buy ? s.ask : s.bid;
+   bool below = (type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_SELL_STOP);
+   if(below ? ref - price < FakeMinDist() : price - ref < FakeMinDist()) return TRADE_RETCODE_INVALID_PRICE;
+   return 0;
+  }
+
+inline bool FakeFrozen(double level, bool buy)
+  {
+   const FakeSym &s = g_fake.sym;
+   if(s.freeze <= 0 || level <= 0.0) return false;
+   return std::fabs(level - (buy ? s.bid : s.ask)) < s.freeze * s.point - s.point * 0.5;
+  }
+
+inline uint FakeOpenRules(const MqlTradeRequest &req, bool buy)
+  {
+   const FakeSym &s = g_fake.sym;
+   if(s.tradeMode == SYMBOL_TRADE_MODE_DISABLED) return TRADE_RETCODE_TRADE_DISABLED;
+   if(s.tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY) return TRADE_RETCODE_CLOSE_ONLY;
+   if(s.tradeMode == SYMBOL_TRADE_MODE_LONGONLY && !buy) return TRADE_RETCODE_LONG_ONLY;
+   if(s.tradeMode == SYMBOL_TRADE_MODE_SHORTONLY && buy) return TRADE_RETCODE_SHORT_ONLY;
+   if(req.volume < s.volMin - 1e-9 || req.volume > s.volMax + 1e-9 || !FakeOnGrid(req.volume, s.volStep)) return TRADE_RETCODE_INVALID_VOLUME;
+   return FakeCheckFilling(req);
+  }
+
+// Instant and request execution fill at the requested price, or requote; market and exchange
+// execution fill at the market, g_fake.slip worse.
+inline uint FakeFillPrice(const MqlTradeRequest &req, bool buy, double &fill)
+  {
+   FakeSym &s = g_fake.sym;
+   if(s.exeMode == SYMBOL_TRADE_EXECUTION_INSTANT || s.exeMode == SYMBOL_TRADE_EXECUTION_REQUEST)
+     {
+      if(g_fake.requotesLeft > 0)
+        {
+         g_fake.requotesLeft--;
+         s.bid += s.point;   // a requote: the price moved
+         s.ask += s.point;
+         return TRADE_RETCODE_REQUOTE;
+        }
+      if(std::fabs(req.price - (buy ? s.ask : s.bid)) > (double)req.deviation * s.point + s.point * 0.5)
+         return TRADE_RETCODE_REQUOTE;
+      fill = req.price;
+     }
+   else
+      fill = buy ? s.ask + g_fake.slip : s.bid - g_fake.slip;
+   g_fake.requotesLeft = g_fake.requotes;
+   return 0;
+  }
+
+inline uint FakeDeal(const MqlTradeRequest &req, MqlTradeResult &res)
+  {
+   bool buy = (req.type == ORDER_TYPE_BUY);
+   if(req.type != ORDER_TYPE_BUY && req.type != ORDER_TYPE_SELL) return TRADE_RETCODE_INVALID_ORDER;
+   bool hedging = (g_fake.marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
+   if(req.position != 0)
+     {
+      // A close: an opposite deal tied to the position.
+      auto it = std::find_if(g_fake.pos.begin(), g_fake.pos.end(), [&](const FakePos &p) { return p.ticket == req.position; });
+      if(it == g_fake.pos.end() || (it->type == POSITION_TYPE_BUY) == buy) return TRADE_RETCODE_INVALID;
+      double left = it->volume - req.volume;
+      if(req.volume <= 0.0 || left < -1e-9 || !FakeOnGrid(req.volume, g_fake.sym.volStep) || (left > 1e-9 && left < g_fake.sym.volMin - 1e-9))
+         return TRADE_RETCODE_INVALID_VOLUME;
+      if(g_fake.fifo && hedging)
+         for(auto &p : g_fake.pos)
+            if(p.symbol == it->symbol && p.ticket != it->ticket && (p.timeMsc < it->timeMsc || (p.timeMsc == it->timeMsc && p.ticket < it->ticket)))
+               return TRADE_RETCODE_FIFO_CLOSE;
+      if(g_fake.sym.tradeMode == SYMBOL_TRADE_MODE_DISABLED) return TRADE_RETCODE_TRADE_DISABLED;
+      if(uint f = FakeCheckFilling(req)) return f;
+      double fill = 0.0;
+      if(uint q = FakeFillPrice(req, buy, fill)) return q;
+      if(left <= 1e-9)
+         g_fake.pos.erase(it);
+      else
+         it->volume = NormalizeDouble(left, 8);
+      res.order = res.deal = g_fake.nextTicket++;
+      res.price = fill;
+      res.volume = req.volume;
+      return TRADE_RETCODE_DONE;
+     }
+   if(g_fake.sym.orderMode != 0 && !(g_fake.sym.orderMode & SYMBOL_ORDER_MARKET)) return TRADE_RETCODE_INVALID_ORDER;
+   if(uint e = FakeOpenRules(req, buy)) return e;
+   if(uint e = FakeCheckLevels(buy, 0.0, req.sl, req.tp)) return e;
+   FakePos *mine = nullptr;
+   for(auto &p : g_fake.pos)
+      if(p.symbol == req.symbol.s)
+        {
+         if(hedging && !g_fake.hedgeAllowed && (p.type == POSITION_TYPE_BUY) != buy) return TRADE_RETCODE_HEDGE_PROHIBITED;
+         if(!hedging && !mine) mine = &p;
+        }
+   double fill = 0.0;
+   if(uint q = FakeFillPrice(req, buy, fill)) return q;
+   res.order = res.deal = g_fake.nextTicket++;
+   res.price = fill;
+   res.volume = req.volume;
+   if(!mine)
+     {
+      g_fake.pos.push_back(FakePos{res.deal, buy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL, req.volume, fill, req.sl, req.tp, 0.0,
+                                   (int64_t)g_fake.time * 1000, req.symbol.s});
+      return TRADE_RETCODE_DONE;
+     }
+   // Netting: the deal adds to the symbol's one position, reduces it, closes it or turns it over.
+   bool same = ((mine->type == POSITION_TYPE_BUY) == buy);
+   if(same)
+     {
+      double vol = mine->volume + req.volume;
+      mine->open = (mine->open * mine->volume + fill * req.volume) / vol;
+      mine->volume = NormalizeDouble(vol, 8);
+      mine->sl = req.sl;
+      mine->tp = req.tp;
+     }
+   else if(req.volume < mine->volume - 1e-9)
+      mine->volume = NormalizeDouble(mine->volume - req.volume, 8);
+   else if(req.volume <= mine->volume + 1e-9)
+     {
+      ulong t = mine->ticket;
+      g_fake.pos.erase(std::remove_if(g_fake.pos.begin(), g_fake.pos.end(), [&](const FakePos &p) { return p.ticket == t; }), g_fake.pos.end());
+     }
+   else
+     {
+      mine->type = buy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+      mine->volume = NormalizeDouble(req.volume - mine->volume, 8);
+      mine->open = fill;
+      mine->sl = req.sl;
+      mine->tp = req.tp;
+     }
+   return TRADE_RETCODE_DONE;
+  }
+
+inline uint FakePending(const MqlTradeRequest &req, MqlTradeResult &res)
+  {
+   const FakeSym &s = g_fake.sym;
+   int t = req.type;
+   bool limit = (t == ORDER_TYPE_BUY_LIMIT || t == ORDER_TYPE_SELL_LIMIT);
+   bool stop = (t == ORDER_TYPE_BUY_STOP || t == ORDER_TYPE_SELL_STOP);
+   bool stopLimit = (t == ORDER_TYPE_BUY_STOP_LIMIT || t == ORDER_TYPE_SELL_STOP_LIMIT);
+   if(!limit && !stop && !stopLimit) return TRADE_RETCODE_INVALID_ORDER;
+   if(s.orderMode != 0 && ((limit && !(s.orderMode & SYMBOL_ORDER_LIMIT)) || (stop && !(s.orderMode & SYMBOL_ORDER_STOP)) ||
+                           (stopLimit && !(s.orderMode & SYMBOL_ORDER_STOP_LIMIT))))
+      return TRADE_RETCODE_INVALID_ORDER;
+   bool buy = FakeBuyType(t);
+   if(uint e = FakeOpenRules(req, buy)) return e;
+   if(uint e = FakeCheckPendingPrice(t, req.price)) return e;
+   if(uint e = FakeCheckLevels(buy, req.price, req.sl, req.tp)) return e;
+   int tt = req.type_time;
+   int flag = (tt == ORDER_TIME_GTC) ? SYMBOL_EXPIRATION_GTC : (tt == ORDER_TIME_DAY) ? SYMBOL_EXPIRATION_DAY :
+              (tt == ORDER_TIME_SPECIFIED) ? SYMBOL_EXPIRATION_SPECIFIED : SYMBOL_EXPIRATION_SPECIFIED_DAY;
+   if(s.expiration != 0 && !(s.expiration & flag)) return TRADE_RETCODE_INVALID_EXPIRATION;
+   if((tt == ORDER_TIME_SPECIFIED || tt == ORDER_TIME_SPECIFIED_DAY) && req.expiration <= g_fake.time) return TRADE_RETCODE_INVALID_EXPIRATION;
+   FakeOrd o{g_fake.nextTicket++, t, req.volume, req.price, req.sl, req.tp, req.stoplimit, tt, req.expiration, req.symbol.s};
+   g_fake.ords.push_back(o);
+   res.order = o.ticket;
+   res.price = req.price;
+   res.volume = req.volume;
+   return TRADE_RETCODE_PLACED;
+  }
+
 inline uint FakeApply(const MqlTradeRequest &req, MqlTradeResult &res)
   {
+   if(req.symbol.s != g_fake.sym.name) return TRADE_RETCODE_INVALID;
    if(req.action == TRADE_ACTION_SLTP)
      {
       for(auto &p : g_fake.pos)
          if(p.ticket == req.position)
            {
+            bool buy = (p.type == POSITION_TYPE_BUY);
             if(p.sl == req.sl && p.tp == req.tp) return TRADE_RETCODE_NO_CHANGES;
+            if(FakeFrozen(p.sl, buy) || FakeFrozen(p.tp, buy)) return TRADE_RETCODE_FROZEN;
+            if(uint e = FakeCheckLevels(buy, 0.0, req.sl, req.tp)) return e;
             p.sl = req.sl;
             p.tp = req.tp;
             return TRADE_RETCODE_DONE;
@@ -563,7 +810,12 @@ inline uint FakeApply(const MqlTradeRequest &req, MqlTradeResult &res)
       for(auto &o : g_fake.ords)
          if(o.ticket == req.order)
            {
+            bool buy = FakeBuyType(o.type);
             if(o.price == req.price && o.sl == req.sl && o.tp == req.tp) return TRADE_RETCODE_NO_CHANGES;
+            if(FakeFrozen(o.price, !buy)) return TRADE_RETCODE_FROZEN;   // an order triggers on the other side
+            if(o.type != ORDER_TYPE_BUY_STOP_LIMIT && o.type != ORDER_TYPE_SELL_STOP_LIMIT)
+               if(uint e = FakeCheckPendingPrice(o.type, req.price)) return e;
+            if(uint e = FakeCheckLevels(buy, req.price, req.sl, req.tp)) return e;
             o.price = req.price;
             o.sl = req.sl;
             o.tp = req.tp;
@@ -574,26 +826,22 @@ inline uint FakeApply(const MqlTradeRequest &req, MqlTradeResult &res)
            }
       return TRADE_RETCODE_INVALID;
      }
+   if(req.action == TRADE_ACTION_REMOVE)
+     {
+      for(size_t i = 0; i < g_fake.ords.size(); i++)
+         if(g_fake.ords[i].ticket == req.order)
+           {
+            if(FakeFrozen(g_fake.ords[i].price, !FakeBuyType(g_fake.ords[i].type))) return TRADE_RETCODE_FROZEN;
+            g_fake.ords.erase(g_fake.ords.begin() + i);
+            res.order = req.order;
+            return TRADE_RETCODE_DONE;
+           }
+      return TRADE_RETCODE_INVALID;
+     }
    if(req.action == TRADE_ACTION_DEAL)
-     {
-      FakePos p{g_fake.nextTicket++, req.type == ORDER_TYPE_BUY ? POSITION_TYPE_BUY : POSITION_TYPE_SELL, req.volume, req.price, req.sl, req.tp,
-                0.0, (int64_t)g_fake.time * 1000, req.symbol.s};
-      g_fake.pos.push_back(p);
-      res.order = res.deal = p.ticket;
-      res.price = req.price;
-      res.volume = req.volume;
-      return TRADE_RETCODE_DONE;
-     }
+      return FakeDeal(req, res);
    if(req.action == TRADE_ACTION_PENDING)
-     {
-      FakeOrd o{g_fake.nextTicket++, (int)req.type, req.volume, req.price, req.sl, req.tp, req.stoplimit, (int)req.type_time, req.expiration,
-                req.symbol.s};
-      g_fake.ords.push_back(o);
-      res.order = o.ticket;
-      res.price = req.price;
-      res.volume = req.volume;
-      return TRADE_RETCODE_PLACED;
-     }
+      return FakePending(req, res);
    return TRADE_RETCODE_INVALID;
   }
 inline bool OrderSend(const MqlTradeRequest &req, MqlTradeResult &res)
@@ -602,8 +850,16 @@ inline bool OrderSend(const MqlTradeRequest &req, MqlTradeResult &res)
    if(g_fake.onSend)
       g_fake.onSend(req);
    res = MqlTradeResult();
-   uint code = g_fake.forceRetcode ? g_fake.forceRetcode : FakeApply(req, res);
+   uint code = g_fake.forceRetcode;
+   if(code == 0)
+     {
+      code = FakeApply(req, res);
+      if(code != TRADE_RETCODE_DONE && code != TRADE_RETCODE_PLACED && code != TRADE_RETCODE_DONE_PARTIAL)
+         g_fake.refusals.push_back(code);
+     }
    res.retcode = code;
+   res.bid = g_fake.sym.bid;
+   res.ask = g_fake.sym.ask;
    return code == TRADE_RETCODE_DONE || code == TRADE_RETCODE_PLACED || code == TRADE_RETCODE_DONE_PARTIAL;
   }
 

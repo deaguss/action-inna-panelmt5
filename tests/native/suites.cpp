@@ -1,62 +1,46 @@
 // Runs ActionInnaTests (worked examples and every generated suite) natively, for several seeds and
-// several made-up symbols, and exits with 1 when any check fails.
+// several made-up symbols. Then runs the suites that read the terminal (order plans and changes to
+// open trades) at every broker profile in brokers.h, with and without positions open. Exits with 1
+// when any check fails.
 //   suites [seeds] [rounds]
 #include "mql.h"
+#include "brokers.h"
 #include "out/src/Scripts/ActionInna/ActionInnaTests.mq5"
 
-struct SymCase
+static void ResetCounters()
   {
-   const char *name;
-   int digits;
-   double point, tick, contract, tickValue, volMin, volMax, volStep;
-   int stops, freeze;
-   double bid, ask;
-  };
+   g_pass = 0;
+   g_fail = 0;
+   g_shown = 0;
+   g_report = string();
+   g_table = string();
+  }
 
-static const SymCase kSyms[] =
+// Positions already open on the symbol: one, or on a hedging account sometimes one each way.
+static void AddOpenTrades(int k)
   {
-   {"EURUSD", 5, 0.00001, 0.00001, 100000, 1.0, 0.01, 100, 0.01, 0, 0, 1.08480, 1.08500},
-   {"USDJPY", 3, 0.001, 0.001, 100000, 0.66, 0.01, 100, 0.01, 10, 0, 151.230, 151.245},
-   {"XAUUSDm", 3, 0.001, 0.001, 100, 0.1, 0.01, 200, 0.01, 0, 0, 2650.120, 2650.280},
-   {"XAUUSD", 2, 0.01, 0.01, 100, 1.0, 0.01, 100, 0.01, 20, 10, 2650.12, 2650.28},
-   {"US30", 1, 0.1, 0.1, 1, 0.1, 0.1, 500, 0.1, 0, 0, 42100.5, 42102.0},
-   {"USTEC", 2, 0.01, 0.25, 1, 0.25, 0.1, 500, 0.1, 40, 0, 18000.25, 18001.00},
-   {"BTCUSD", 2, 0.01, 0.01, 1, 0.01, 0.01, 20, 0.01, 0, 30, 67000.00, 67015.50},
-  };
+   const FakeSym &s = g_fake.sym;
+   int64_t t = (int64_t)g_fake.time * 1000;
+   int type = (k % 2) ? POSITION_TYPE_SELL : POSITION_TYPE_BUY;
+   g_fake.pos.push_back(FakePos{500001, type, s.volMin, s.bid, 0.0, 0.0, 0.0, t - 60000, s.name});
+   if(g_fake.marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING && k % 3 == 0)
+      g_fake.pos.push_back(FakePos{500002, 1 - type, s.volMin, s.ask, 0.0, 0.0, 0.0, t - 30000, s.name});
+  }
 
 int main(int argc, char **argv)
   {
    MqlTrapZeroDivide();
    int seeds = (argc > 1) ? atoi(argv[1]) : 3;
    int rounds = (argc > 2) ? atoi(argv[2]) : 1;
-   int nsym = (int)(sizeof(kSyms) / sizeof(kSyms[0]));
    int failed = 0;
    int64_t checks = 0;
    for(int k = 0; k < seeds; k++)
-      for(int j = 0; j < nsym; j++)
+      for(int j = 0; j < kSymCount; j++)
         {
          const SymCase &c = kSyms[j];
-         g_fake.Reset();
-         g_fake.sym.name = c.name;
-         g_fake.sym.digits = c.digits;
-         g_fake.sym.point = c.point;
-         g_fake.sym.tickSize = c.tick;
-         g_fake.sym.contract = c.contract;
-         g_fake.sym.tickValue = c.tickValue;
-         g_fake.sym.volMin = c.volMin;
-         g_fake.sym.volMax = c.volMax;
-         g_fake.sym.volStep = c.volStep;
-         g_fake.sym.stops = c.stops;
-         g_fake.sym.freeze = c.freeze;
-         g_fake.sym.bid = c.bid;
-         g_fake.sym.ask = c.ask;
-         _Symbol = string(c.name);
-         g_pass = 0;
-         g_fail = 0;
-         g_shown = 0;
-         g_report = string();
-         g_table = string();
-         InpSeed = 20261021u + 7919u * (uint)(k * nsym + j);
+         SetUpSymbol(c);
+         ResetCounters();
+         InpSeed = 20261021u + 7919u * (uint)(k * kSymCount + j);
          InpRounds = rounds;
          OnStart();
          checks += g_pass + g_fail;
@@ -69,6 +53,44 @@ int main(int argc, char **argv)
             failed += g_fail;
            }
         }
-   printf("\nsuites: %s checks over %d seeds x %d symbols, %d failed\n", std::to_string(checks).c_str(), seeds, nsym, failed);
-   return failed ? 1 : 0;
+   printf("\nsuites: %s checks over %d seeds x %d symbols, %d failed\n\n", std::to_string(checks).c_str(), seeds, kSymCount, failed);
+
+   int64_t brokerChecks = 0;
+   int brokerFailed = 0;
+   for(int b = 0; b < kBrokerCount; b++)
+     {
+      int profileChecks = 0;
+      int profileFailed = 0;
+      for(int j = 0; j < kSymCount; j++)
+        {
+         SetUpSymbol(kSyms[j]);
+         ApplyBroker(kBrokers[b]);
+         if((b + j) % 2 == 1)
+            AddOpenTrades(b + j);
+         ResetCounters();
+         g_rng = 20261021u + 104729u * (uint)(b * kSymCount + j);
+         SuiteLivePlans(1000 * rounds);
+         SuiteLiveModify(1000 * rounds);
+         SuiteMoney(500 * rounds);
+         // Every broker's name for a symbol gets the same Trader pip: gold 0.1, 3- and 5-digit
+         // symbols 10 points, others 1 point.
+         const SymCase &c = kSyms[j];
+         AiSpec s;
+         AiLoadSpec(_Symbol, AI_PIP_TRADER, s);
+         double pip = (std::string(c.base) == "XAU") ? 0.1 : ((c.digits == 3 || c.digits == 5) ? c.point * 10.0 : c.point);
+         Check(Near(s.pipSize, pip, 1e-12), "Trader pip " + D(s.pipSize) + " on " + _Symbol + ", expected " + D(pip));
+         profileChecks += g_pass + g_fail;
+         if(g_fail > 0)
+           {
+            printf("FAILED at %s, %s:\n%s%s\n", kBrokers[b].name, _Symbol.s.c_str(), g_table.s.c_str(), g_report.s.c_str());
+            profileFailed += g_fail;
+           }
+        }
+      printf("broker %-78s %7d checks, %d failed\n", kBrokers[b].name, profileChecks, profileFailed);
+      brokerChecks += profileChecks;
+      brokerFailed += profileFailed;
+     }
+   printf("\nbrokers: %s checks over %d profiles x %d symbols, %d failed\n", std::to_string(brokerChecks).c_str(), kBrokerCount, kSymCount,
+          brokerFailed);
+   return (failed + brokerFailed) ? 1 : 0;
   }

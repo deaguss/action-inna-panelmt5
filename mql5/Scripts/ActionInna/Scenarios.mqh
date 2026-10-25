@@ -350,6 +350,69 @@ void SuiteEntryShift(const int n)
    Row(suite, n, fails);
   }
 
+// AiFollowFill against a reference in whole ticks: which levels move after slippage and by how
+// much, and that a stop which follows the fill keeps its distance, so the money at risk stays as
+// planned.
+void SuiteFollowFill(const int n)
+  {
+   string suite = "SL/TP after slippage";
+   int fails = 0;
+   for(int i = 0; i < n; i++)
+     {
+      AiSpec s;
+      RandomSpec(s);
+      double tick = s.tickSize;
+      int side = RndChance(2) ? AI_BUY : AI_SELL;
+      int plannedT = RndInt(1000, 2000000);
+      int slipT = RndChance(8) ? 0 : RndInt(-50, 50);
+      int fillT = plannedT + slipT;
+      int slDistT = RndInt(1, 500);
+      int slT = RndChance(10) ? 0 : plannedT - side * slDistT;
+      int slMode = RndChance(2) ? AI_LEVEL_PIPS : AI_LEVEL_PRICE;
+      int tpMode = RndInt(AI_LEVEL_PIPS, AI_LEVEL_RR);
+      double tpR = NormalizeDouble(RndRange(0.5, 5.0), 2);
+      int tpT = RndChance(10) ? 0 : plannedT + side * RndInt(1, 1000);
+      if(tpMode == AI_LEVEL_RR && tpT > 0)
+         tpT = (slT > 0) ? plannedT + side * (int)MathRound(tpR * slDistT) : 0;   // as the plan built it
+      int policy = RndInt(AI_SLIP_FOLLOW, AI_SLIP_KEEP_RISK);
+      double newSl = 0.0;
+      double newTp = 0.0;
+      bool moved = AiFollowFill(s, policy, side, plannedT * tick, fillT * tick, slMode, tpMode, tpR, slT * tick, tpT * tick, newSl, newTp);
+
+      int expSlT = slT;
+      double expTp = tpT * tick;
+      bool rr = false;   // a TP in R from the fill: within half a tick of R stop distances, on the grid
+      if(policy != AI_SLIP_KEEP_PRICES)
+        {
+         bool all = (policy == AI_SLIP_KEEP_RISK);
+         if(slT > 0 && (all || slMode != AI_LEVEL_PRICE))
+            expSlT = slT + slipT;
+         if(tpT > 0)
+           {
+            if(all || tpMode == AI_LEVEL_PIPS)
+               expTp = (tpT + slipT) * tick;
+            else if(tpMode == AI_LEVEL_RR && expSlT > 0 && (fillT - expSlT) * side > 0)
+              {
+               rr = true;
+               expTp = (fillT + side * tpR * (fillT - expSlT) * side) * tick;
+              }
+           }
+        }
+      double k = newTp / tick;
+      bool tpOk = rr ? (MathAbs(newTp - expTp) <= tick * (0.5 + 1e-6) && MathAbs(k - MathRound(k)) < 1e-6) : Near(newTp, expTp, tick * 0.01);
+      bool expMoved = (expSlT != slT) || MathAbs((rr ? newTp : expTp) - tpT * tick) >= tick * 0.5;
+      bool ok = Near(newSl, expSlT * tick, tick * 0.01) && tpOk && moved == expMoved;
+      if(ok && slT > 0 && expSlT != slT)
+         ok = Near(MathAbs(fillT * tick - newSl), slDistT * tick, tick * 0.01);
+      if(!Expect(ok, fails))
+         Detail(suite, ((side == AI_BUY) ? "buy" : "sell") + " planned " + IntegerToString(plannedT) + ", filled " + IntegerToString(fillT) + ", SL " +
+                IntegerToString(slT) + " (mode " + IntegerToString(slMode) + "), TP " + IntegerToString(tpT) + " (mode " + IntegerToString(tpMode) +
+                ", R " + D(tpR) + ") ticks, policy " + IntegerToString(policy) + " gave SL " + D(newSl / tick) + ", TP " + D(newTp / tick) +
+                (moved ? " (moved)" : "") + "; expected SL " + IntegerToString(expSlT) + ", TP " + D(expTp / tick));
+     }
+   Row(suite, n, fails);
+  }
+
 // Every remembered SL/TP survives being written to the recall file and read back.
 void SuiteMemoryRoundTrip(const int n)
   {
@@ -562,21 +625,26 @@ void SuiteKeys(const int n)
 
 // Pip sizes follow each convention; in the Trader convention forex and gold pips do not depend
 // on how many digits the broker quotes, and recalled distances convert back to the same price.
+// Gold is gold under any broker's name for it, or by its base currency alone.
 void SuitePipSizes(const int n)
   {
    string suite = "Pip sizes and recalled distances";
    int fails = 0;
-   string syms[11] = {"EURUSD", "EURUSDm", "USDJPY", "GBPJPYz", "XAUUSD", "XAUUSDm", "GOLD", "US30", "USTEC", "BTCUSD", "ETHUSDm"};
+   string syms[15] = {"EURUSD", "EURUSDm", "USDJPY", "GBPJPYz", "XAUUSD", "XAUUSDm", "#XAUUSD", "XAUUSD.pro", "GOLD", "GOLD.r", "US30", "USTEC",
+                      "BTCUSD", "ETHUSDm", "SPOTAU"};
+   string bases[15] = {"EUR", "EUR", "USD", "GBP", "XAU", "XAU", "XAU", "XAU", "", "", "USD", "USD", "BTC", "ETH", "XAU"};
    for(int i = 0; i < n; i++)
      {
-      string sym = syms[RndInt(0, 10)];
+      int pickSym = RndInt(0, 14);
+      string sym = syms[pickSym];
+      string base = RndChance(3) ? "" : bases[pickSym];   // CFD-style symbols often report no base currency
       int d = RndInt(0, 5);
       double point = MathPow(10.0, -d);
       int mode = RndInt(0, 2);
-      double pip = AiPipSize(sym, d, point, mode);
+      double pip = AiPipSize(sym, d, point, mode, base);
       string up = sym;
       StringToUpper(up);
-      bool gold = (StringFind(up, "XAU") == 0 || StringFind(up, "GOLD") >= 0);
+      bool gold = (base == "XAU" || StringFind(up, "XAU") >= 0 || StringFind(up, "GOLD") >= 0);
       double expected = point;
       if(mode == AI_PIP_EXNESS)
          expected = point * 10.0;
@@ -590,16 +658,17 @@ void SuitePipSizes(const int n)
       bool ok = (pip > 0.0) && Near(pip, expected, 1e-12 * MathMax(1.0, expected));
       // A 5-digit and a 4-digit broker (or 3 and 2 for JPY) give the same Trader pip.
       if(ok && mode == AI_PIP_TRADER && !gold && (d == 3 || d == 5))
-         ok = Near(pip, AiPipSize(sym, d - 1, MathPow(10.0, -(d - 1)), AI_PIP_TRADER), 1e-12);
+         ok = Near(pip, AiPipSize(sym, d - 1, MathPow(10.0, -(d - 1)), AI_PIP_TRADER, base), 1e-12);
       if(ok && mode == AI_PIP_TRADER && gold)
-         ok = Near(pip, AiPipSize(sym, RndInt(0, 5), MathPow(10.0, -RndInt(0, 5)), AI_PIP_TRADER), 1e-12);
+         ok = Near(pip, AiPipSize(sym, RndInt(0, 5), MathPow(10.0, -RndInt(0, 5)), AI_PIP_TRADER, base), 1e-12);
       // A distance recalled as pips (rounded to 0.1 pip) is back within a twentieth of a pip.
       double dist = MathPow(10.0, RndRange(-4.0, 3.0));
       double pips = NormalizeDouble(dist / pip, 1);
       if(ok)
          ok = MathAbs(pips * pip - dist) <= pip * 0.05 + 1e-12;
       if(!Expect(ok, fails))
-         Detail(suite, sym + ", digits " + IntegerToString(d) + ", mode " + IntegerToString(mode) + ": pip " + D(pip) + ", expected " + D(expected));
+         Detail(suite, sym + " (base \"" + base + "\"), digits " + IntegerToString(d) + ", mode " + IntegerToString(mode) + ": pip " + D(pip) +
+                ", expected " + D(expected));
      }
    Row(suite, n, fails);
   }
@@ -612,7 +681,8 @@ void SuiteMoney(const int n)
    for(int i = 0; i < n; i++)
      {
       double v = RndChance(10) ? RndRange(-0.01, 0.01) : RndRange(-10000000.0, 10000000.0);
-      int dec = RndChance(5) ? 0 : 2;
+      int dec = RndChance(5) ? 0 : (RndChance(4) ? -1 : 2);   // -1: the account currency's decimals
+      int shown = (dec < 0) ? AiMoneyDigits() : dec;
       string cur = RndChance(2) ? "USD" : "USC";
       bool withSign = RndChance(2);
       string s = AiMoney(v, cur, withSign, dec);
@@ -622,9 +692,11 @@ void SuiteMoney(const int n)
       StringReplace(t, " " + cur, "");
       StringReplace(t, "+", "");
       double back = StringToDouble(t);
-      double unit = MathPow(10.0, -dec);
+      double unit = MathPow(10.0, -shown);
       // Within one display unit: a value exactly halfway may round either way in the last digit.
-      bool ok = Near(back, NormalizeDouble(v, dec), unit + 1e-6);
+      bool ok = Near(back, NormalizeDouble(v, shown), unit + 1e-6);
+      int dot = StringFind(s, ".");
+      ok = ok && ((shown == 0) ? dot < 0 : (dot >= 0 && StringLen(t) - StringFind(t, ".") - 1 == shown));
       if(cur == "USD")
          ok = ok && StringFind(s, "$") >= 0;
       else
@@ -637,6 +709,34 @@ void SuiteMoney(const int n)
          Detail(suite, D(v) + " with " + IntegerToString(dec) + " decimals in " + cur + " showed \"" + s + "\"");
      }
    Row(suite, n, fails);
+  }
+
+// A reference for AiOppositeBlocked: a hedging account that allows no opposite positions, with a
+// position open the other way on the chart's symbol.
+bool OppositeForbidden(const int side)
+  {
+   if(AccountInfoInteger(ACCOUNT_MARGIN_MODE) != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING || AccountInfoInteger(ACCOUNT_HEDGE_ALLOWED) != 0)
+      return false;
+   long other = (side == AI_BUY) ? POSITION_TYPE_SELL : POSITION_TYPE_BUY;
+   for(int i = 0; i < PositionsTotal(); i++)
+      if(PositionGetTicket(i) != 0 && PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_TYPE) == other)
+         return true;
+   return false;
+  }
+
+// The symbol takes this order type with these levels (no flags at all means no limits).
+bool SymbolAllows(const AiSpec &s, const ENUM_ORDER_TYPE t, const double sl, const double tp)
+  {
+   int need = SYMBOL_ORDER_MARKET;
+   if(t == ORDER_TYPE_BUY_LIMIT || t == ORDER_TYPE_SELL_LIMIT)
+      need = SYMBOL_ORDER_LIMIT;
+   else if(t == ORDER_TYPE_BUY_STOP || t == ORDER_TYPE_SELL_STOP)
+      need = SYMBOL_ORDER_STOP;
+   if(sl > 0.0)
+      need |= SYMBOL_ORDER_SL;
+   if(tp > 0.0)
+      need |= SYMBOL_ORDER_TP;
+   return s.orderFlags == 0 || (s.orderFlags & need) == need;
   }
 
 // Full order plans on the chart's real symbol, with live prices and the real account: random sides,
@@ -744,6 +844,10 @@ void SuiteLivePlans(const int n)
             why = "margin " + D(p.margin) + " is above the free margin";
          else if(MathAbs(p.riskPct - AiSafeDiv(p.riskMoney, p.base) * 100.0) > 1e-6)
             why = "risk % does not match the risk money";
+         else if(!in.pending && OppositeForbidden(in.side))
+            why = "a market order opposite an open position, on an account that allows none";
+         else if(!SymbolAllows(s, p.type, p.sl, p.tp))
+            why = "the symbol does not take this order type, SL or TP";
          ok = (why == "");
         }
       else if(p.err == "")

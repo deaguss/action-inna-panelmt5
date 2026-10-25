@@ -693,15 +693,57 @@ private:
       Fail(r.msg);
      }
 
+   // A risk this close to the plan's counts as the plan's: moving a stop to the tick grid can shift it a little.
+   double            RiskTolerance() const
+     {
+      return MathMax(0.01, m_plan.riskMoney * 0.005);
+     }
+
+   // "Filled 3.0 pips worse. SL/TP moved: risk $100.00 as planned". Short, to fit the panel's two
+   // status lines; the log has the order and the prices.
+   string            FillText(const AiFillReport &f) const
+     {
+      string text = "Filled " + DoubleToString(MathAbs(f.slipPips), 1) + " pips " + ((f.slipPips > 0.0) ? "worse" : "better") + ". ";
+      if(f.notMoved != "")
+         text += "SL/TP not moved";
+      else if(f.slMoved && f.tpMoved)
+         text += "SL/TP moved";
+      else if(f.slMoved)
+         text += "SL moved, TP kept";
+      else if(f.tpMoved)
+         text += "SL kept, TP moved";
+      else
+         text += "SL/TP kept";
+      if(f.sl <= 0.0)
+         return text;
+      string cur = Currency();
+      if(MathAbs(f.risk - m_plan.riskMoney) <= RiskTolerance())
+         return text + ": risk " + AiMoney(f.risk, cur) + " as planned";
+      return text + ": risk " + AiMoney(f.risk, cur) + " (plan " + AiMoney(m_plan.riskMoney, cur) + ")";
+     }
+
    void              OnSent(const AiSendResult &r)
      {
       SaveMemory();
       string msg = AiOrderTypeName(m_plan.type) + " " + AiLotsStr(m_spec, r.volume) + " " + _Symbol +
                    (m_plan.pending ? " placed at " : " filled at ") + AiPriceStr(m_spec, r.price);
-      Status(msg, 3, 8000);
       AiLog(msg + " | SL " + AiPriceStr(m_spec, m_plan.sl) + " TP " + AiPriceStr(m_spec, m_plan.tp) +
             " | risk " + DoubleToString(m_plan.riskMoney, 2) + " (" + DoubleToString(m_plan.riskPct, 2) + "%)" +
             " | ticket " + IntegerToString((long)r.ticket));
+      int level = 3;
+      AiFillReport f;
+      AiAfterFill(m_exec, m_spec, m_plan, cfg, m_slMode, m_tpMode, m_tpValue, r, f);
+      if(f.slipped)
+        {
+         msg = FillText(f);
+         if(f.sl > 0.0 && f.risk > m_plan.riskMoney + RiskTolerance())
+            level = 1;
+         AiLog("Slippage: planned " + AiPriceStr(m_spec, m_plan.entry) + ", filled " + AiPriceStr(m_spec, r.price) + " (" +
+               DoubleToString(f.slipPips, 1) + " pips) | SL " + AiPriceStr(m_spec, f.sl) + " TP " + AiPriceStr(m_spec, f.tp) +
+               ((f.notMoved != "") ? " | not moved: " + f.notMoved : "") + " | risk " + DoubleToString(f.risk, 2) + ", planned " +
+               DoubleToString(m_plan.riskMoney, 2));
+        }
+      Status(msg, level, 8000);
       if(cfg.sounds)
          PlaySound("ok.wav");
       m_phase = AI_PHASE_COOLDOWN;

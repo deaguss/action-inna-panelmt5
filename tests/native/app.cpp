@@ -5,6 +5,7 @@
 //   app [fuzz-iterations] [seed]
 #include <random>
 #include "mql.h"
+#include "brokers.h"
 #include <ActionInna/App.mqh>
 
 CAiApp g_app;   // a global, as in the EA: zeroed before its constructor runs
@@ -163,11 +164,25 @@ static AiSettings DefaultCfg()
    return c;
   }
 
-static void Setup(const std::string &name, bool manage = true)
+// Requotes aside, the server refused nothing the panel sent: every request a Confirm let through was
+// one this broker's rules accept.
+static void CheckServerRefusals()
   {
+   for(uint code : g_fake.refusals)
+      if(code != TRADE_RETCODE_REQUOTE)
+         s_bad.push_back(s_case + ": the server refused a request with " + std::to_string(code));
+   g_fake.refusals.clear();
+  }
+
+static void Setup(const std::string &name, bool manage = true, const BrokerProfile *broker = nullptr)
+  {
+   CheckServerRefusals();
    s_case = name;
    g_app.Deinit(REASON_REMOVE);
    g_fake.Reset();
+   _Symbol = string(g_fake.sym.name);
+   if(broker)
+      ApplyBroker(*broker);
    g_app.cfg = DefaultCfg();
    g_app.cfg.manageOrders = manage;
    g_app.Init();
@@ -661,6 +676,128 @@ static void ScenarioTemplate()
    EXPECT(g_fake.chartI[CHART_SHOW_TRADE_LEVELS] == 0, "and off again afterwards");
   }
 
+// A market order that fills away from its planned price. The order carries its SL and TP, a second
+// request moves them as the SL mode says, and the panel says what the stop risks now. EURUSD at
+// $10,000: 1% with a 20-pip stop is 0.50 lots, $100.
+static void ScenarioSlippage()
+  {
+   Setup("slippage: an SL in pips moves with the fill");
+   g_fake.slip = 0.00030;
+   Key('B');
+   Advance(350);
+   Key(13);
+   EXPECT(g_fake.pos.size() == 1 && Sent() == 2, "one order, then one change: sent " + std::to_string(Sent()));
+   if(Sent() == 2 && g_fake.pos.size() == 1)
+     {
+      const FakePos &p = g_fake.pos[0];
+      EXPECT(g_fake.requests[0].sl > 0.0 && g_fake.requests[0].tp > 0.0, "the order itself carried SL and TP");
+      EXPECT(Near(p.open, 1.08530) && Near(p.sl, 1.08330) && Near(p.tp, 1.08930), "SL 20 pips and TP 2R from the fill: open " +
+             std::to_string(p.open) + ", SL " + std::to_string(p.sl) + ", TP " + std::to_string(p.tp));
+     }
+   EXPECT(PanelStatus() == "Filled 3.0 pips worse. SL/TP moved: risk $100.00 as planned", "the panel says so, in full: " + PanelStatus());
+
+   Setup("slippage: an SL set as a price stays, a TP in R follows");
+   g_fake.slip = 0.00030;
+   Key('B');
+   Click(kP + "SLMODE#bg");
+   Advance(350);
+   Key(13);
+   EXPECT(g_fake.pos.size() == 1 && Sent() == 2, "one order, then the TP change");
+   if(g_fake.pos.size() == 1)
+      EXPECT(Near(g_fake.pos[0].sl, 1.08300) && Near(g_fake.pos[0].tp, 1.08990), "SL where it was set, TP 2R from the fill and that SL: SL " +
+             std::to_string(g_fake.pos[0].sl) + ", TP " + std::to_string(g_fake.pos[0].tp));
+   EXPECT(PanelStatus() == "Filled 3.0 pips worse. SL kept, TP moved: risk $115.00 (plan $100.00)", "the panel says so, in full: " + PanelStatus());
+
+   Setup("slippage: keep my prices");
+   g_app.cfg.slipPolicy = AI_SLIP_KEEP_PRICES;
+   g_fake.slip = 0.00030;
+   Key('B');
+   Advance(350);
+   Key(13);
+   EXPECT(Sent() == 1 && g_fake.pos.size() == 1 && Near(g_fake.pos[0].sl, 1.08300), "nothing moves after the order");
+   EXPECT(PanelStatus() == "Filled 3.0 pips worse. SL/TP kept: risk $115.00 (plan $100.00)", "the panel says so, in full: " + PanelStatus());
+
+   Setup("slippage: a better fill");
+   g_fake.slip = -0.00020;
+   Key('B');
+   Advance(350);
+   Key(13);
+   EXPECT(Sent() == 2 && g_fake.pos.size() == 1 && Near(g_fake.pos[0].sl, 1.08280), "the SL follows down");
+   EXPECT(PanelStatus() == "Filled 2.0 pips better. SL/TP moved: risk $100.00 as planned", "the panel says so, in full: " + PanelStatus());
+
+   Setup("slippage: the broker's freeze level blocks the move");
+   g_fake.slip = 0.00030;
+   g_fake.sym.freeze = 300;
+   Key('B');
+   Advance(350);
+   Key(13);
+   EXPECT(Sent() == 1 && g_fake.pos.size() == 1 && Near(g_fake.pos[0].sl, 1.08300), "no change is sent; the order's own SL stays");
+   EXPECT(PanelStatus() == "Filled 3.0 pips worse. SL/TP not moved: risk $115.00 (plan $100.00)", "the panel says so, in full: " + PanelStatus());
+
+   Setup("slippage: a netting order that joins the open position");
+   g_fake.marginMode = ACCOUNT_MARGIN_MODE_RETAIL_NETTING;
+   g_fake.slip = 0.00030;
+   AddPos(101, POSITION_TYPE_BUY, 0.10, 1.08000, 1.07750, 1.08900);
+   Refresh();
+   Key('B');
+   Advance(350);
+   Key(13);
+   EXPECT(Sent() == 1 && g_fake.pos.size() == 1, "the order joins the position; no change follows");
+   EXPECT(Has(PanelStatus(), "SL/TP not moved"), "the panel says so: " + PanelStatus());
+  }
+
+// The same orders at every broker profile, through the real panel: a market BUY, a market SELL and
+// a pending BUY LIMIT. Each is accepted by a server that applies that broker's rules, or refused on
+// the panel with the reason and never sent.
+static void ScenarioBrokers()
+  {
+   for(int b = 0; b < kBrokerCount; b++)
+     {
+      const BrokerProfile &pr = kBrokers[b];
+      Setup(std::string("broker: ") + pr.name, true, &pr);
+      size_t sent = Sent();
+      Key('B');
+      Advance(350);
+      Key(13);
+      Refresh();
+      if(!(pr.orderMode & SYMBOL_ORDER_SL) || !(pr.orderMode & SYMBOL_ORDER_TP))
+        {
+         EXPECT(Sent() == sent, "a symbol that takes no SL or TP: nothing is sent while both are required");
+         EXPECT(Has(PanelStatus(), "does not accept a stop loss"), "and the panel says why: " + PanelStatus());
+         Key(27);
+         continue;
+        }
+      EXPECT(g_fake.pos.size() == 1 && (Has(PanelStatus(), "filled at") || Has(PanelStatus(), "Filled ")), "the market BUY is filled: " + PanelStatus());
+      Advance(800);
+      Refresh();
+
+      sent = Sent();
+      Key('S');
+      Advance(350);
+      Key(13);
+      Refresh();
+      if(BrokerHedging(pr) && !pr.hedgeAllowed)
+        {
+         EXPECT(Sent() == sent && Has(PanelStatus(), "allows no opposite positions"), "an opposite SELL is refused on the panel: " + PanelStatus());
+         Key(27);
+        }
+      else if(BrokerHedging(pr))
+         EXPECT(g_fake.pos.size() == 2, "the SELL opens a second position: " + PanelStatus());
+      else
+         EXPECT(Sent() > sent && g_fake.pos.size() <= 1, "netting: the SELL goes into the symbol's one position: " + PanelStatus());
+      Advance(800);
+      Refresh();
+
+      size_t orders = g_fake.ords.size();
+      Key('P');
+      Key('B');
+      Advance(350);
+      Key(13);
+      Refresh();
+      EXPECT(g_fake.ords.size() == orders + 1 && Has(PanelStatus(), "placed at"), "the BUY LIMIT is placed: " + PanelStatus());
+     }
+  }
+
 //--- fuzz --------------------------------------------------------------------
 static double Norm5(double p) { return std::round(p * 100000.0) / 100000.0; }
 
@@ -699,7 +836,9 @@ static void Fuzz(int iterations, unsigned seed)
    auto I = [&](int a, int b) { return std::uniform_int_distribution<int>(a, b)(rng); };
    for(int it = 0; it < iterations; it++)
      {
-      Setup("fuzz " + std::to_string(seed) + "/" + std::to_string(it));
+      const BrokerProfile &broker = kBrokers[I(0, kBrokerCount - 1)];
+      Setup("fuzz " + std::to_string(seed) + "/" + std::to_string(it) + " at " + broker.name, true, &broker);
+      bool netting = !BrokerHedging(broker);
       g_fake.sym.stops = I(0, 1) ? 0 : I(1, 40);
       g_fake.sym.freeze = (I(0, 3) == 0) ? I(1, 30) : 0;
       g_app.cfg.maxRiskPct = (I(0, 3) == 0) ? 0.0 : R(0.5, 8.0);
@@ -709,6 +848,8 @@ static void Fuzz(int iterations, unsigned seed)
          double bid = g_fake.sym.bid, ask = g_fake.sym.ask;
          int kind = I(0, 9);
          double sl = 0.0, tp = 0.0;
+         if(kind < 5 && netting && !g_fake.pos.empty())
+            kind = 5;   // a netting account has one position per symbol
          if(kind < 5)
            {
             int type = I(0, 1);
@@ -749,6 +890,7 @@ static void Fuzz(int iterations, unsigned seed)
            }
          const char *levels[] = {"E", "S", "T"};
          int a = I(0, 17);
+         bool cardWasOpen = CardOpen();
          s_lastAction = "action " + std::to_string(a) + " on #" + std::to_string(t);
          if(a <= 5 && t != 0)
            {
@@ -830,8 +972,10 @@ static void Fuzz(int iterations, unsigned seed)
          EXPECT(OrderOf(kP + "XBG#r") > TopTradeObject(), "the panel stays over the trade lines");
          if(Sent() > before)
            {
+            // A change from the card, not one that moved a new order's SL/TP after slippage.
             const MqlTradeRequest &r = Last();
-            bool change = (r.action == TRADE_ACTION_SLTP || r.action == TRADE_ACTION_MODIFY);
+            bool viaCard = (a == 7 || a == 8 || (a == 10 && cardWasOpen));
+            bool change = viaCard && (r.action == TRADE_ACTION_SLTP || r.action == TRADE_ACTION_MODIFY);
             if(change && g_fake.forceRetcode == 0)
                EXPECT(!CardOpen(), "the card closes after a change goes through");
             if(change && g_fake.forceRetcode != 0)
@@ -870,11 +1014,14 @@ int main(int argc, char **argv)
    ScenarioPreviewAndCard();
    ScenarioTimeframeChange();
    ScenarioTemplate();
+   ScenarioSlippage();
+   ScenarioBrokers();
    int named = s_pass + s_fail;
    int namedFail = s_fail;
    printf("app scenarios: %d checks, %d failed\n", named, namedFail);
 
    Fuzz(iterations, seed);
+   CheckServerRefusals();
    printf("app fuzz: %d iterations x 80 steps (seed %u), %d checks, %d failed\n", iterations, seed, s_pass + s_fail - named, s_fail - namedFail);
 
    for(size_t i = 0; i < s_bad.size() && i < 30; i++)

@@ -7,6 +7,8 @@
 #include "Defines.mqh"
 #include "Util.mqh"
 #include "SymbolSpec.mqh"
+#include "RiskCalc.mqh"
+#include "Trades.mqh"
 
 struct AiSendResult
   {
@@ -298,5 +300,59 @@ public:
       return false;
      }
   };
+
+// A market order that filled a tick or more away from its planned entry: moves its SL and TP as
+// cfg.slipPolicy says (AiFollowFill), and reports where they are and what the stop now risks. The
+// position already carries the planned SL and TP, so it is never without them meanwhile. A netting
+// position the order only joined keeps its levels: they belong to more than this order.
+void AiAfterFill(CAiExecutor &exec, const AiSpec &s, const AiPlan &p, const AiSettings &cfg, const int slMode, const int tpMode,
+                 const double tpR, const AiSendResult &r, AiFillReport &f)
+  {
+   ZeroMemory(f);
+   f.sl = p.sl;
+   f.tp = p.tp;
+   f.risk = p.riskMoney;
+   if(p.pending || r.price <= 0.0)
+      return;
+   double half = MathMax(s.tickSize, s.point) * 0.5;
+   if(MathAbs(r.price - p.entry) < half)
+      return;
+   f.slipped = true;
+   f.slipPips = AiSafeDiv((r.price - p.entry) * p.side, s.pipSize);
+   AiLive l;
+   if(!AiFindPosition(s.symbol, r.ticket, l))
+     {
+      f.notMoved = "the position was not found";
+      return;
+     }
+   bool joined = (MathAbs(l.lots - r.volume) > s.volStep * 0.5 || MathAbs(l.open - r.price) >= half);
+   double newSl = l.sl;
+   double newTp = l.tp;
+   if(joined)
+      f.notMoved = "the order joined the open position, whose SL/TP stay";
+   else if(AiFollowFill(s, cfg.slipPolicy, p.side, p.entry, r.price, slMode, tpMode, tpR, l.sl, l.tp, newSl, newTp))
+     {
+      MqlTick tick;
+      ZeroMemory(tick);
+      SymbolInfoTick(s.symbol, tick);
+      string why = AiCheckModify(s, l, l.open, newSl, newTp, tick.bid, tick.ask);
+      AiSendResult mr;
+      ZeroMemory(mr);
+      if(why == "" && exec.Modify(s, l, l.open, newSl, newTp, mr))
+        {
+         f.slMoved = (MathAbs(newSl - l.sl) >= half);
+         f.tpMoved = (MathAbs(newTp - l.tp) >= half);
+         l.sl = newSl;
+         l.tp = newTp;
+        }
+      else
+         f.notMoved = (why != "") ? why : mr.msg;
+     }
+   f.sl = l.sl;
+   f.tp = l.tp;
+   double comm = MathMax(cfg.commissionRT, 0.0) * r.volume;
+   double loss = 0.0;
+   f.risk = (f.sl > 0.0 && AiLossPerLot(s, p.side, r.price, f.sl, loss)) ? loss * r.volume + comm : comm;
+  }
 
 #endif

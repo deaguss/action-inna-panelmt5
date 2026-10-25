@@ -31,7 +31,8 @@ input double              InpPendingOffset  = 10.0;           // A new pending o
 input group "Execution"
 input bool                InpOneClick       = false;          // One-click trading: SELL/BUY send at once, no preview
 input ulong               InpMagic          = 0;              // Magic number (0 = counts as a manual trade)
-input int                 InpDeviation      = 10;             // Max slippage in points (instant execution only)
+input int                 InpDeviation      = 10;             // Max slippage in points (instant and request execution only)
+input ENUM_AI_SLIP        InpAfterSlip      = AI_SLIP_FOLLOW; // When a market order fills at another price
 input string              InpComment        = "ActionInna";   // Order comment
 input bool                InpManageOrders   = true;           // Drag open trades' entry/SL/TP with a confirm pop-up (replaces MT5's own trade lines on this chart)
 
@@ -81,6 +82,7 @@ int OnInit()
    g_app.cfg.oneClick = InpOneClick;
    g_app.cfg.magic = InpMagic;
    g_app.cfg.deviation = InpDeviation;
+   g_app.cfg.slipPolicy = InpAfterSlip;
    g_app.cfg.comment = InpComment;
    g_app.cfg.manageOrders = InpManageOrders;
    g_app.cfg.hotkeys = InpHotkeys;

@@ -108,12 +108,21 @@ string AiGroup(const double v, const int decimals)
    return out + fp;
   }
 
-// "$1,234.50" for USD accounts, "1,234.50 EUR" or "1,234.50 USC" for others.
-string AiMoney(const double v, const string currency, const bool withSign = false, const int decimals = 2)
+// Decimals of the account currency, as MT5 shows trade results: 2 for USD or EUR, 0 for JPY.
+int AiMoneyDigits()
   {
-   string num = AiGroup(MathAbs(v), decimals);
+   long d = AccountInfoInteger(ACCOUNT_CURRENCY_DIGITS);
+   return (d >= 0 && d <= 8) ? (int)d : 2;
+  }
+
+// "$1,234.50" for USD accounts, "1,234.50 EUR" or "1,234.50 USC" for others. Without decimals the
+// account currency's own are used ("1,235 JPY").
+string AiMoney(const double v, const string currency, const bool withSign = false, const int decimals = -1)
+  {
+   int dec = (decimals < 0) ? AiMoneyDigits() : decimals;
+   string num = AiGroup(MathAbs(v), dec);
    string sign = "";
-   if(v < 0.0 && MathAbs(v) >= 0.5 * MathPow(10.0, -decimals))
+   if(v < 0.0 && MathAbs(v) >= 0.5 * MathPow(10.0, -dec))
       sign = "-";
    else if(withSign && v > 0.0)
       sign = "+";

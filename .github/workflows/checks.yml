@@ -1,5 +1,6 @@
-# MQL5 can only be compiled by MetaEditor inside an MT5 install, so CI checks what it can without one.
-# Compiling and the test script stay part of every pull request (see CONTRIBUTING.md).
+# MQL5 can only be compiled by MetaEditor inside an MT5 install, so CI checks what it can without one,
+# including the native tests: the same sources compiled with g++ against a fake MT5. Compiling in
+# MetaEditor and the test script stay part of every pull request (see CONTRIBUTING.md).
 name: checks
 
 on:
@@ -39,3 +40,11 @@ jobs:
             }
           }
           if ($failed) { exit 1 }
+
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Native tests (worked examples, generated suites, broker profiles, panel scenarios and fuzz)
+        run: bash tests/native/run.sh

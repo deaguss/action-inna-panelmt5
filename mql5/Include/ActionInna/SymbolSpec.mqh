@@ -31,9 +31,22 @@ struct AiSpec
    int               expirationFlags;
   };
 
+// Gold by its base currency, or by XAU or GOLD anywhere in the name: brokers add prefixes and
+// suffixes (#XAUUSD, XAUUSD.r, GOLDm), and some give a gold CFD no base currency at all.
+bool AiIsGold(const string symbol, const string base)
+  {
+   string b = base;
+   StringToUpper(b);
+   if(b == "XAU")
+      return true;
+   string up = symbol;
+   StringToUpper(up);
+   return (StringFind(up, "XAU") >= 0 || StringFind(up, "GOLD") >= 0);
+  }
+
 // Trader mode counts gold at 0.1 per pip (as gold traders quote it), a 5- or 3-digit symbol at
-// 10 points, anything else at one point. Exness counts 10 points on every symbol.
-double AiPipSize(const string symbol, const int digits, const double point, const int mode)
+// 10 points, anything else at one point. The 10-point mode counts 10 points on every symbol.
+double AiPipSize(const string symbol, const int digits, const double point, const int mode, const string base = "")
   {
    if(point <= 0.0)
       return 0.0;
@@ -41,9 +54,7 @@ double AiPipSize(const string symbol, const int digits, const double point, cons
       return point;
    if(mode == AI_PIP_EXNESS)
       return point * 10.0;
-   string up = symbol;
-   StringToUpper(up);
-   if(StringFind(up, "XAU") == 0 || StringFind(up, "GOLD") >= 0)
+   if(AiIsGold(symbol, base))
       return 0.1;
    if(digits == 3 || digits == 5)
       return point * 10.0;
@@ -74,7 +85,7 @@ bool AiLoadSpec(const string symbol, const int pipMode, AiSpec &s)
    s.fillingFlags = (int)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
    s.orderFlags = (int)SymbolInfoInteger(symbol, SYMBOL_ORDER_MODE);
    s.expirationFlags = (int)SymbolInfoInteger(symbol, SYMBOL_EXPIRATION_MODE);
-   s.pipSize = AiPipSize(symbol, s.digits, s.point, pipMode);
+   s.pipSize = AiPipSize(symbol, s.digits, s.point, pipMode, SymbolInfoString(symbol, SYMBOL_CURRENCY_BASE));
    s.pipPoints = AiSafeDiv(s.pipSize, s.point, 1.0);
    s.ok = (s.point > 0.0 && s.volMin > 0.0 && s.pipSize > 0.0);
    return s.ok;

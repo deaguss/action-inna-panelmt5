@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //| ActionInnaTests.mq5                                              |
 //| ActionInna's tests: worked examples, then generated scenarios    |
-//| (about 114,000 per round). Drag onto any chart; the two live     |
+//| (about 124,000 per round). Drag onto any chart; the two live     |
 //| suites use that chart's symbol and prices and send no orders.    |
 //+------------------------------------------------------------------+
 #property copyright   "ActionInna, MIT licence"
@@ -12,7 +12,7 @@
 #include "Scenarios.mqh"
 
 input uint InpSeed   = 20261021; // Seed (the same seed replays the same scenarios)
-input int  InpRounds = 1;        // Rounds (one round is about 114,000 scenarios)
+input int  InpRounds = 1;        // Rounds (one round is about 124,000 scenarios)
 
 void TestSteps()
   {
@@ -43,6 +43,10 @@ void TestPips()
    Check(Near(AiPipSize("US30m", 1, 0.1, AI_PIP_EXNESS), 1.0), "pip US30 exness = 1");
    Check(Near(AiPipSize("BTCUSD", 2, 0.01, AI_PIP_POINT), 0.01), "pip in points mode");
    Check(Near(AiPipSize("USTEC", 2, 0.01, AI_PIP_TRADER), 0.01), "pip 2-digit index trader = 1 point");
+   Check(Near(AiPipSize("#XAUUSD", 2, 0.01, AI_PIP_TRADER), 0.1), "gold with a # prefix is still gold");
+   Check(Near(AiPipSize("XAUUSD.r", 3, 0.001, AI_PIP_TRADER), 0.1), "gold with a .r suffix is still gold");
+   Check(Near(AiPipSize("SPOTAU", 2, 0.01, AI_PIP_TRADER, "XAU"), 0.1), "gold known by its base currency only");
+   Check(Near(AiPipSize("EURUSD.pro", 5, 0.00001, AI_PIP_TRADER, "EUR"), 0.0001), "forex with a suffix keeps its pip");
   }
 
 void TestOrderTypes()
@@ -168,6 +172,34 @@ void TestModify()
    Check(Near(o, 1.08400, 1e-9) && Near(tp, 1.08800, 1e-9), "an entry of zero changes nothing");
   }
 
+// A market order that fills away from its planned entry: which of its SL and TP move, and where to.
+void TestFollowFill()
+  {
+   AiSpec g;
+   ZeroMemory(g);
+   g.digits = 2;
+   g.point = 0.01;
+   g.tickSize = 0.01;
+   g.pipSize = 0.1;
+   double sl = 0.0;
+   double tp = 0.0;
+   // BUY gold planned at 2650.28, filled 0.30 worse at 2650.58; SL 50 pips, TP 2R.
+   Check(AiFollowFill(g, AI_SLIP_FOLLOW, AI_BUY, 2650.28, 2650.58, AI_LEVEL_PIPS, AI_LEVEL_RR, 2.0, 2645.28, 2660.28, sl, tp) &&
+         Near(sl, 2645.58, 1e-9) && Near(tp, 2660.58, 1e-9), "SL in pips and TP in R move with the fill");
+   Check(AiFollowFill(g, AI_SLIP_FOLLOW, AI_BUY, 2650.28, 2650.58, AI_LEVEL_PRICE, AI_LEVEL_RR, 2.0, 2645.00, 2660.84, sl, tp) &&
+         Near(sl, 2645.00, 1e-9) && Near(tp, 2661.74, 1e-9), "SL set as a price stays; TP in R counts from the fill and that SL");
+   Check(AiFollowFill(g, AI_SLIP_FOLLOW, AI_BUY, 2650.28, 2650.58, AI_LEVEL_PIPS, AI_LEVEL_PRICE, 2.0, 2645.28, 2660.00, sl, tp) &&
+         Near(sl, 2645.58, 1e-9) && Near(tp, 2660.00, 1e-9), "TP set as a price stays");
+   Check(!AiFollowFill(g, AI_SLIP_KEEP_PRICES, AI_BUY, 2650.28, 2650.58, AI_LEVEL_PIPS, AI_LEVEL_RR, 2.0, 2645.28, 2660.28, sl, tp) &&
+         Near(sl, 2645.28, 1e-9) && Near(tp, 2660.28, 1e-9), "keep prices: nothing moves");
+   Check(AiFollowFill(g, AI_SLIP_KEEP_RISK, AI_BUY, 2650.28, 2650.58, AI_LEVEL_PRICE, AI_LEVEL_PRICE, 2.0, 2645.00, 2660.00, sl, tp) &&
+         Near(sl, 2645.30, 1e-9) && Near(tp, 2660.30, 1e-9), "keep the planned risk: both move, even prices");
+   Check(AiFollowFill(g, AI_SLIP_FOLLOW, AI_SELL, 2650.12, 2650.32, AI_LEVEL_PIPS, AI_LEVEL_PIPS, 2.0, 2655.12, 2640.12, sl, tp) &&
+         Near(sl, 2655.32, 1e-9) && Near(tp, 2640.32, 1e-9), "a SELL filled 0.20 better: SL and TP move up with it");
+   Check(!AiFollowFill(g, AI_SLIP_FOLLOW, AI_BUY, 2650.28, 2650.284, AI_LEVEL_PIPS, AI_LEVEL_PIPS, 2.0, 2645.28, 2660.28, sl, tp),
+         "less than a tick of slippage moves nothing");
+  }
+
 // Object names of open trades: AI_O<ticket>#<level><part>.
 void TestTradeObjectNames()
   {
@@ -263,8 +295,10 @@ void TestParsing()
    Check(!AiParseNumber("", v), "empty text is refused");
    Check(AiTrimZeros("1.50") == "1.5" && AiTrimZeros("2.00") == "2" && AiTrimZeros("10") == "10", "trailing zeros");
    Check(AiGroup(12345.6, 2) == "12,345.60", "thousands separator");
-   Check(AiMoney(-100.0, "USD") == "-$100.00", "money in USD");
-   Check(AiMoney(200.0, "USC", true) == "+200.00 USC", "money in another currency");
+   Check(AiMoney(-100.0, "USD", false, 2) == "-$100.00", "money in USD");
+   Check(AiMoney(200.0, "USC", true, 2) == "+200.00 USC", "money in another currency");
+   Check(AiMoney(-1234.4, "JPY", false, 0) == "-1,234 JPY", "money in a currency without decimals");
+   Check(AiMoney(1.5, "EUR") == AiMoney(1.5, "EUR", false, AiMoneyDigits()), "money uses the account currency's decimals by default");
   }
 
 void TestKeys()
@@ -293,6 +327,7 @@ void OnStart()
    TestOrderTypes();
    TestStops();
    TestModify();
+   TestFollowFill();
    TestTradeObjectNames();
    TestLots();
    TestMemory();
@@ -307,6 +342,7 @@ void OnStart()
    SuiteStopsOracle(10000 * rounds);
    SuiteModifyOracle(10000 * rounds);
    SuiteEntryShift(10000 * rounds);
+   SuiteFollowFill(10000 * rounds);
    SuiteMemoryRoundTrip(5000 * rounds);
    SuiteMemoryFuzz(5000 * rounds);
    SuiteParseNumber(10000 * rounds);

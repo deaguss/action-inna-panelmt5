@@ -46,7 +46,7 @@
 enum ENUM_AI_PIP_MODE
   {
    AI_PIP_TRADER = 0, // Trader: gold 0.1, 3/5-digit symbols 10 points, others 1 point
-   AI_PIP_EXNESS = 1, // Exness: 1 pip = 10 points on every symbol
+   AI_PIP_EXNESS = 1, // 10 points: 1 pip = 10 points on every symbol (as Exness counts)
    AI_PIP_POINT  = 2  // Points: 1 pip = 1 point
   };
 
@@ -68,6 +68,14 @@ enum ENUM_AI_LEVEL_MODE
    AI_LEVEL_PIPS  = 0, // Pips
    AI_LEVEL_PRICE = 1, // Price
    AI_LEVEL_RR    = 2  // R multiple of the stop (take profit only)
+  };
+
+// What happens to a market order's SL and TP when it fills at another price than planned.
+enum ENUM_AI_SLIP
+  {
+   AI_SLIP_FOLLOW      = 0, // Follow the SL mode: levels in pips or R move with the fill, prices stay
+   AI_SLIP_KEEP_PRICES = 1, // Keep SL and TP where they were set
+   AI_SLIP_KEEP_RISK   = 2  // Move SL and TP with the fill: the money at risk stays as planned
   };
 
 enum ENUM_AI_THEME
@@ -133,6 +141,7 @@ struct AiSettings
    bool              oneClick;
    ulong             magic;
    int               deviation;
+   int               slipPolicy;   // ENUM_AI_SLIP
    string            comment;
    bool              manageOrders;
    bool              hotkeys;
@@ -209,6 +218,7 @@ struct AiPlan
 struct AiLive
   {
    ulong             ticket;
+   ulong             id;           // a position's identifier: the ticket of the order that opened it
    bool              isOrder;      // pending order: its entry can move, a position's cannot
    ENUM_ORDER_TYPE   type;         // ORDER_TYPE_BUY or ORDER_TYPE_SELL for a position
    int               side;
@@ -240,6 +250,19 @@ struct AiModPlan
    double            rr;           // target distance / stop distance, 0 while the stop locks in profit
    double            slPips;
    double            tpPips;
+  };
+
+// What became of a market order that filled away from its planned entry (slippage).
+struct AiFillReport
+  {
+   bool              slipped;      // filled a tick or more away from the planned entry
+   double            slipPips;     // above 0: worse for the trader than planned
+   bool              slMoved;
+   bool              tpMoved;
+   string            notMoved;     // why a due move was not made; "" when it was, or none was due
+   double            sl;           // the position's SL and TP afterwards
+   double            tp;
+   double            risk;         // money lost if that SL is hit, commission included
   };
 
 // One remembered SL/TP. Distances are stored as price, not points or pips: a $5 stop on gold is

@@ -23,8 +23,28 @@ All notable changes to ActionInna are recorded here. The format follows
   scenarios per round.
 - Native tests (`tests/native/run.sh`): the same sources compiled with g++ against a fake MT5, with
   drag-and-confirm scenarios and a random fuzz that checks every request the fake server receives.
+- Slippage handling. When a market order fills a tick or more away from its planned entry, the input
+  "When a market order fills at another price" decides what happens to its SL and TP:
+  - Follow the SL mode (the default): levels in pips or R move with the fill, so an SL in pips keeps
+    the planned risk, and levels set as a price stay.
+  - Keep them where they were set.
+  - Move both with the fill.
+  The order always carries its SL and TP. A move is a second request, checked like any change to an
+  open trade. The status line reports the slippage and the risk at the stop.
+- Broker set-ups in the native tests (`tests/native/brokers.h`). Every live suite, the panel's orders
+  and the fuzz run at nine set-ups, against a fake server that applies each one's rules: filling per
+  execution mode, expiry types, order types, SL/TP allowed, volume and price grids, stops and freeze
+  levels, netting, no opposite positions, FIFO closes, requotes and slippage.
+- CI runs the native tests on every push.
 
 ### Fixed
+
+- Gold behind a broker prefix (`#XAUUSD`, `m.XAUUSD`) got a forex pip instead of 0.1 in the Trader
+  convention. Gold is now also recognised by its base currency, XAU.
+- On an account that allows no opposite positions, an order against an open position reached the
+  broker and was refused there. The panel now refuses it first and says why. A pending order gets a
+  warning instead.
+- Money now shows with the account currency's decimals (JPY with none), not always two.
 
 - Symbol data (stops and freeze levels) is read again right before an order or a change is sent. The
   timer reads it once a second, so a broker change within that second could let a request through
@@ -35,6 +55,12 @@ All notable changes to ActionInna are recorded here. The format follows
 ### Changed
 
 - The test report no longer records the broker's server name.
+- The pip convention "Exness" is now called "10 points" (it counts 10 points per pip on every
+  symbol); saved settings keep working.
+- The "Max slippage" input says it applies to instant and request execution only, which is what MT5
+  does.
+- Open positions and pending orders are read in `Trades.mqh`, shared by the chart lines and the
+  slippage handling.
 
 ## [1.0.0] - 2026-10-21
 
