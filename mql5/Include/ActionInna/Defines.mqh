@@ -232,6 +232,8 @@ struct AiLive
    double            stopLimit;    // limit price of a stop-limit order
    int               timeType;     // ENUM_ORDER_TYPE_TIME of a pending order
    datetime          expiration;
+   long              magic;        // a pending order's owner (EA magic number), kept when it is replaced
+   string            comment;      // and its comment
   };
 
 // A change to one of them, checked and valued before it may be sent.
@@ -252,6 +254,9 @@ struct AiModPlan
    double            rr;           // target distance / stop distance, 0 while the stop locks in profit
    double            slPips;
    double            tpPips;
+   ENUM_ORDER_TYPE   type;         // the trade's type after the change
+   bool              retype;       // a pending entry moved across the market: the order is replaced by one of
+                                   // the other type (a limit becomes a stop or back), as MT5 can't change a type
   };
 
 // What became of a market order that filled away from its planned entry (slippage).

@@ -9,72 +9,77 @@
 <body>
 <header class="block" id="head">
   <div class="line">
-    <strong id="account">ActionInna</strong>
+    <strong id="account" class="grow">ActionInna</strong>
     <span id="mode" class="badge" hidden></span>
   </div>
-  <div class="line">
-    <span id="conn" class="muted">Starting the link…</span>
+  <div class="line small">
+    <span id="conn" class="muted grow">Starting the link…</span>
     <button type="button" id="startMt5" hidden>Start MT5</button>
   </div>
-  <label class="line" id="termRow" hidden>MT5 <select id="terms"></select></label>
+  <label class="line small" id="termRow" hidden><span class="label">MT5</span> <select id="terms" class="grow"></select></label>
 </header>
 
-<section class="block" id="symbolBlock" aria-label="Symbol">
-  <div class="line">
-    <input id="symbol" class="grow" type="text" spellcheck="false" autocomplete="off" placeholder="Symbol, e.g. XAUUSD" aria-label="Symbol">
-    <button type="button" id="symbolGo">Use</button>
+<section class="block" id="symbolBlock" aria-label="Symbol and prices">
+  <strong id="symbol" class="symbolName">-</strong>
+  <div id="followNote" class="small muted" hidden></div>
+  <div id="followAsk" class="line small" hidden>
+    <button type="button" id="followAllow">Allow access to TradingView</button>
+    <span class="muted">so the panel can follow its chart</span>
   </div>
-  <label class="line small"><input type="checkbox" id="followTv"> Follow TradingView's symbol</label>
   <div id="cands" class="cands" hidden></div>
-  <div class="line quote" aria-live="off">
-    <span id="bid" class="sellText">-</span>
-    <span id="spread" class="muted small">-</span>
-    <span id="ask" class="buyText">-</span>
+  <div class="sides">
+    <button type="button" id="sell" class="side sell"><span class="sideName">SELL</span><span id="sellPx" class="px">-</span></button>
+    <div class="spreadBox"><span id="spread">-</span><span class="muted">spread</span></div>
+    <button type="button" id="buy" class="side buy"><span class="sideName">BUY</span><span id="buyPx" class="px">-</span></button>
   </div>
 </section>
 
 <section class="block" id="orderBlock" aria-label="New order">
-  <div class="sides">
-    <button type="button" id="sell" class="side sell"><span>SELL</span><span id="sellPx" class="px">-</span></button>
-    <button type="button" id="buy" class="side buy"><span>BUY</span><span id="buyPx" class="px">-</span></button>
-  </div>
   <div class="line">
-    <button type="button" id="kind" class="chip">Market</button>
-    <label id="entryRow" class="grow line" hidden>Entry <input id="entry" class="grow" type="text" inputmode="decimal" aria-label="Entry price"></label>
+    <div class="seg" role="group" aria-label="Order type">
+      <button type="button" id="kindMarket" class="chip">Market</button>
+      <button type="button" id="kindPending" class="chip">Pending</button>
+    </div>
+    <label id="entryRow" class="grow line" hidden><span class="muted">Entry</span> <input id="entry" class="grow" type="text" inputmode="decimal" aria-label="Entry price"></label>
   </div>
-  <div class="line chips" role="group" aria-label="Risk">
+  <div class="line" role="group" aria-label="Risk">
+    <span class="label">Risk</span>
     <button type="button" class="chip" data-chip="0">1%</button>
     <button type="button" class="chip" data-chip="1">1.5%</button>
     <button type="button" class="chip" data-chip="2">2%</button>
-    <input id="custom" class="num" type="text" inputmode="decimal" aria-label="Custom risk">
-    <button type="button" id="customUnit" class="chip" aria-label="Custom risk unit">%</button>
+    <input id="custom" class="grow num" type="text" inputmode="decimal" placeholder="other" aria-label="Your own risk">
+    <button type="button" id="customUnit" class="chip unit" aria-label="Your own risk in">%</button>
   </div>
   <div class="line">
     <span class="label">Stop loss</span>
     <input id="sl" class="grow" type="text" inputmode="decimal" aria-label="Stop loss">
-    <button type="button" id="slMode" class="chip">pips</button>
-    <button type="button" id="slLast" class="chip muted">Last</button>
+    <button type="button" id="slMode" class="chip unit">pips</button>
+    <button type="button" id="slLast" class="chip">Last</button>
   </div>
   <div class="line">
     <span class="label">Take profit</span>
     <input id="tp" class="grow" type="text" inputmode="decimal" aria-label="Take profit">
-    <button type="button" id="tpMode" class="chip">R</button>
-    <button type="button" id="tpLast" class="chip muted">Last</button>
+    <button type="button" id="tpMode" class="chip unit">R</button>
+    <button type="button" id="tpLast" class="chip">Last</button>
   </div>
-  <dl id="nums" class="nums">
-    <dt>Lots</dt><dd id="nLots">-</dd>
-    <dt>Risk</dt><dd id="nRisk">-</dd>
-    <dt>Reward</dt><dd id="nReward">-</dd>
-    <dt>Risk : reward</dt><dd id="nRr">-</dd>
-    <dt>Distance (pips)</dt><dd id="nDist">-</dd>
-    <dt>Pip value</dt><dd id="nPip">-</dd>
-    <dt>Margin</dt><dd id="nMargin">-</dd>
-  </dl>
+  <div id="planBox" class="plan" hidden>
+    <div class="summary">
+      <div><span class="muted small">Lots</span><strong id="nLots">-</strong></div>
+      <div class="right"><span class="muted small">Risk</span><strong id="nRisk">-</strong></div>
+    </div>
+    <dl id="nums" class="nums">
+      <dt>Reward</dt><dd id="nReward">-</dd>
+      <dt>Risk : reward</dt><dd id="nRr">-</dd>
+      <dt>Distance (pips)</dt><dd id="nDist">-</dd>
+      <dt>Pip value</dt><dd id="nPip">-</dd>
+      <dt>Margin</dt><dd id="nMargin">-</dd>
+    </dl>
+    <div class="line">
+      <button type="button" id="confirm" class="confirm grow" disabled>Confirm</button>
+      <button type="button" id="cancelPreview" class="chip" aria-label="Close the preview">X</button>
+    </div>
+  </div>
   <div id="status" class="status" role="status"></div>
-  <div class="line">
-    <button type="button" id="confirm" class="confirm grow" disabled>Press SELL or BUY</button>
-    <button type="button" id="cancelPreview" class="chip" hidden aria-label="Close the preview">X</button>
-  </div>
   <details id="opts" class="opts small">
     <summary>Options</summary>
     <label class="line"><input type="checkbox" id="optAuto"> Set SL/TP from my last trade on the symbol</label>
@@ -84,7 +89,6 @@
 
 <section class="block" id="tradesBlock" aria-label="Open trades">
   <strong>Open trades</strong>
-  <div id="acct" class="muted small"></div>
   <div id="card" class="card" hidden></div>
   <ul id="trades" class="trades"></ul>
   <div id="noTrades" class="muted small">No open trades.</div>

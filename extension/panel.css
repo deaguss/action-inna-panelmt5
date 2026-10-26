@@ -55,6 +55,7 @@ body {
   font: 13px/1.35 Arial, Helvetica, sans-serif;
 }
 
+/* Three sections: who and where, what to trade, what is open. */
 .block {
   padding: 10px;
   border-bottom: 1px solid var(--divider);
@@ -74,7 +75,8 @@ body {
 .right { text-align: right; }
 .small { font-size: 12px; }
 .muted { color: var(--muted); }
-.label { width: 76px; flex: none; color: var(--muted); }
+/* One label column, so the risk, SL and TP fields start at the same place. */
+.label { width: 72px; flex: none; color: var(--muted); }
 .buyText { color: var(--buy-text); }
 .sellText { color: var(--sell-text); }
 .dangerText { color: var(--danger); }
@@ -104,7 +106,8 @@ input, select {
   padding: 0 6px;
 }
 
-input.num { width: 64px; }
+input.num { min-width: 44px; }
+input::placeholder { color: var(--muted); }
 
 :focus-visible {
   outline: 2px solid var(--text);
@@ -117,6 +120,14 @@ input.num { width: 64px; }
   font-weight: bold;
 }
 
+/* Unit and mode buttons share a width, so the fields before them line up. */
+.chip.unit { width: 46px; padding: 0; flex: none; }
+
+/* Market | Pending: two halves of one control. */
+.seg { display: inline-flex; flex: none; }
+.seg .chip + .chip { margin-left: -1px; }
+.seg .chip[aria-pressed="true"] { position: relative; }
+
 .badge {
   font-size: 11px;
   font-weight: bold;
@@ -126,66 +137,107 @@ input.num { width: 64px; }
 
 .badge.real { color: var(--danger); border-color: var(--danger); }
 
-.quote { justify-content: space-between; font-weight: bold; font-size: 14px; }
+#account { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.symbolName { font-size: 16px; }
 
 .cands { display: flex; flex-direction: column; gap: 4px; }
 .cands button { text-align: left; }
 
-.sides { display: flex; gap: 4px; }
+/* SELL | spread | BUY: the prices are the numbers a trader reads, so they are the large type. */
+.sides { display: flex; gap: 4px; align-items: stretch; margin-top: 2px; }
 
 .side {
   flex: 1 1 0;
-  height: 48px;
+  min-width: 0;
+  height: 54px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-weight: bold;
-  font-size: 14px;
+  gap: 2px;
 }
 
-.side .px { font-weight: normal; font-size: 12px; }
+.side .sideName { font-size: 11px; font-weight: bold; }
+.side .px { font-size: 17px; font-weight: bold; }
 .side.buy { background: var(--buy-dim); color: var(--buy-text); border-color: var(--buy-fill); }
 .side.sell { background: var(--sell-dim); color: var(--sell-text); border-color: var(--sell-fill); }
 .side.buy[aria-pressed="true"] { background: var(--buy-fill); color: var(--on-fill); }
 .side.sell[aria-pressed="true"] { background: var(--sell-fill); color: var(--on-fill); }
+.side:disabled { opacity: 0.6; }
+
+.spreadBox {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.spreadBox #spread { font-size: 13px; font-weight: bold; }
+
+/* The preview: what the order risks first, the rest below, then Confirm. */
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.summary { display: flex; justify-content: space-between; gap: 8px; }
+.summary > div { display: flex; flex-direction: column; min-width: 0; }
+.summary strong { font-size: 18px; }
 
 .nums {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 2px 8px;
   margin: 0;
+  font-size: 12px;
 }
 
 .nums dt { color: var(--muted); }
 .nums dd { margin: 0; text-align: right; }
 
-.status { min-height: 34px; font-size: 12px; }
+/* A wide panel keeps label and number close: two pairs to a row. */
+@media (min-width: 460px) {
+  .nums { grid-template-columns: auto 1fr auto 1fr; column-gap: 16px; }
+}
+
+.status { font-size: 12px; }
+.status:empty { display: none; }
 .status.l1 { color: var(--warn); }
 .status.l2 { color: var(--danger); }
 .status.l3 { color: var(--good); }
 
-.confirm { height: 36px; font-weight: bold; }
+.confirm { height: 38px; font-weight: bold; }
 .confirm.buy:not(:disabled) { background: var(--buy-fill); color: var(--on-fill); border-color: var(--buy-fill); }
 .confirm.sell:not(:disabled) { background: var(--sell-fill); color: var(--on-fill); border-color: var(--sell-fill); }
 
 .opts summary { color: var(--muted); cursor: pointer; min-height: 24px; line-height: 24px; }
 .opts[open] summary { margin-bottom: 2px; }
 
-.trades { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Open trades: rows parted by a line, so the list reads as one list. */
+.trades { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 
 .trade {
-  border: 1px solid var(--border);
-  padding: 6px;
+  padding: 8px 0;
+  border-top: 1px solid var(--divider);
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.trade .what { display: flex; justify-content: space-between; gap: 6px; }
+.trade:first-child { border-top: 0; padding-top: 2px; }
+.trade .what { display: flex; justify-content: space-between; gap: 6px; font-weight: bold; }
 .trade .levels { font-size: 12px; color: var(--muted); }
 .trade .acts { display: flex; gap: 4px; flex-wrap: wrap; }
+.trade .acts button { min-height: 24px; font-size: 12px; }
 
+/* A change being made stands out from the list it belongs to. */
 .card {
   border: 1px solid var(--text);
   padding: 8px;
@@ -198,3 +250,6 @@ input.num { width: 64px; }
 .card .acts .go { flex: 1 1 auto; font-weight: bold; }
 .card .acts .go.buy:not(:disabled) { background: var(--buy-fill); color: var(--on-fill); border-color: var(--buy-fill); }
 .card .acts .go.sell:not(:disabled) { background: var(--sell-fill); color: var(--on-fill); border-color: var(--sell-fill); }
+/* Its message sits above its Confirm: two lines kept, so the button never moves under the cursor. */
+.card .status { min-height: 32px; }
+.card .status:empty { display: block; }

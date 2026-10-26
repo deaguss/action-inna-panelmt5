@@ -142,9 +142,15 @@ pending order on the symbol. Dragging one of them never sends anything:
 - **Confirm change** sends the change. **Cancel** (or **Esc**) puts the lines back, and nothing is sent.
 - Moving a pending order's entry moves its SL and TP along with it, so the money at risk stays the
   same. Drag SL or TP afterwards to set them on their own.
-- A position's stop may go to break-even or past it, to lock in profit. The card checks the levels
-  against the market price, the broker's minimum distance and its freeze level, and against "Require a
-  stop loss / take profit".
+- Moving a pending order's entry across the market makes it the other type: a Buy Limit dragged above
+  the price becomes a Buy Stop, a Sell Stop dragged above it a Sell Limit. The card says so before you
+  confirm. MT5 can't change an order's type, so ActionInna removes the order, then places the new one
+  with the same lots, SL/TP, owner and comment, and the expiry when the symbol still takes it.
+  Removing first means a failure leaves no order rather than two; the panel then says so.
+- A position's stop may go to break-even or past it, to lock in profit, once the price is far enough
+  past the entry; before that, the card says how far it has to go. The card checks the levels against
+  the market price, the broker's minimum distance and its freeze level, and against "Require a stop
+  loss / take profit".
 - The safety cap blocks a change that raises the risk above it. Tightening a stop is never blocked.
 - Click a trade's tag to open the card without dragging, for example to add a missing SL or TP.
 - Stop-limit orders are drawn but locked: change them in MT5's Trade tab.
@@ -184,13 +190,29 @@ Everything it shows comes from the ActionInna EA in MT5, and everything it sends
 
 - **The order form** is the chart panel's: SELL/BUY, Market or Pending, risk 1 / 1.5 / 2 % or your
   own (%, money or lots), SL in pips or price, TP in R, pips or price, Last, the numbers, Confirm.
-- **The symbol:** type it, or a TradingView ticker such as `OANDA:XAUUSD`. ActionInna finds the
-  broker's name for it (`XAUUSDm`, `#XAUUSD`, `GOLD`) and asks when more than one fits. **Follow
-  TradingView's symbol** asks for access to TradingView's tabs, and reads only their address and
-  title.
+- **The symbol is TradingView's.** When you switch the chart in TradingView, the panel switches with
+  it, by itself; there is nothing to type. ActionInna finds the broker's name for TradingView's
+  ticker (`XAUUSDm`, `#XAUUSD`, `GOLD`), and asks once when more than one fits. The first time, the
+  panel asks with one click for access to TradingView's tabs. A line under the symbol says where it
+  comes from, or why it stays put: a ticker your broker doesn't have, or no TradingView chart in
+  front.
+- **Lines on TradingView's chart.** The order you prepare shows on TradingView's chart as lines: its
+  entry, its SL with the money at risk, its TP with the reward and the R:R. Every open position and
+  pending order on the symbol shows too, dashed. Drag a line to change it:
+  - **The preview's SL, TP, or a pending order's entry:** the panel takes the new price and works
+    out the numbers again.
+  - **An open trade's SL or TP, or a pending order's entry:** its change card opens, and the line
+    shows "(not sent)" until you confirm. A pending order's SL and TP move with its entry.
+
+  Nothing is sent from the chart: the order still goes when you press Confirm in the panel. The
+  lines stand at your broker's prices, which can differ a little from TradingView's data.
+  TradingView offers no public way to draw on its charts, so the panel uses TradingView's own chart
+  code inside its page. If TradingView changes that code, the lines stop showing; the panel works
+  as before.
 - **Open trades:** every position and pending order on every symbol, with its profit. Close (all or
-  part), Change SL/TP (a pending order's entry too) and Remove each open a card with the money at the
-  new levels. Nothing changes until its Confirm.
+  part), Change SL/TP (a pending order's entry too), Break-even (the stop to the entry) and Remove
+  each open a card with the money at the new levels. Nothing changes until its Confirm. A pending
+  entry moved across the market turns the order into the other type, as on the chart.
 - **Several MT5s** (two brokers, say): a list picks the one the panel works with.
 - **Options**, as in the chart panel's menu: SL/TP from your last trade on the symbol, and risk in %
   of equity or of balance. One-click trading stays on the chart: in the browser, Confirm is always a
@@ -421,8 +443,12 @@ Panel choices (risk chip, custom values, toggles, position) are saved in
 12. Drag SL, then TP, then confirm: both change in one go. Move the stop past the open price: allowed.
     Drag it past the market price: Confirm stays disabled and the card says why.
 13. Place a Buy Limit and drag its entry: SL and TP follow at the same distance. Drag it above the
-    price: the card refuses, because a Buy Limit must stay below the market.
-14. Remove the EA: MT5's own trade lines come back.
+    price: the card says it becomes a Buy Stop. Confirm: the Trade tab shows a Buy Stop at that price
+    with the same lots, SL and TP, and no Buy Limit.
+14. Open a position and, while it is still at a loss, drag its stop to the entry (or press Break-even
+    in the browser panel): the card says how far the price has to go. Once it is far enough in
+    profit, the same moves the stop to the entry.
+15. Remove the EA: MT5's own trade lines come back.
 
 Then repeat the checks you care about on the live account with the smallest lot.
 
@@ -456,9 +482,11 @@ link/                  the link between the browser panel and MT5 (ActionInnaLin
   Host.cs          the browser side (Chrome's native messaging), the pipe to the EAs, starting MT5
   Installer.cs     --install and --uninstall: this Windows user only, no administrator rights
 extension/             the browser side panel: plain JavaScript, no build step
-  manifest.json    the side panel, the link (native messaging) and its own storage; TradingView tabs only when asked
+  manifest.json    the side panel, the link (native messaging), its own storage, and its scripts in TradingView's tabs once allowed
   panel.html, panel.css, panel.js   the panel: what MT5 says, shown; what you type and press, sent
-  lib/             numbers (format.js), the symbol of a TradingView tab (tv.js), the link connection (link.js)
+  lib/             numbers (format.js), the symbol of a TradingView tab (tv.js), the link connection (link.js),
+                   the lines for TradingView's chart (lines.js)
+  tv/              put into TradingView's tab: page.js draws the lines and reports drags, bridge.js relays
   icons/           drawn by scripts/make-icons.mjs
   dev/mock.js      a stand-in for the link and MT5, for working on the panel in a plain tab (not published)
 scripts/

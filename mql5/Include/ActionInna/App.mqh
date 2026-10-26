@@ -911,18 +911,33 @@ private:
       Draw(true);   // show "Saving..." before OrderSend blocks
       AiSendResult r;
       ZeroMemory(r);
-      bool ok = m_exec.Modify(m_spec, was, open, sl, tp, r);
+      bool retype = m_mod.retype;
+      ENUM_ORDER_TYPE newType = m_mod.type;
+      bool ok = retype ? m_exec.Replace(m_spec, was, newType, open, sl, tp, r) : m_exec.Modify(m_spec, was, open, sl, tp, r);
       m_modSending = false;
       m_modBusyUntil = AiNowMs() + 700;
       string before = " | before: entry " + AiPriceStr(m_spec, was.open) + " SL " + AiPriceStr(m_spec, was.sl) + " TP " + AiPriceStr(m_spec, was.tp) +
                       ", " + AiLotsStr(m_spec, was.lots) + " lots";
       if(ok)
         {
-         string msg = "Changed " + TicketText(was.ticket) + ": " + levels;
+         string msg = retype ? AiOrderTypeName(was.type) + " " + TicketText(was.ticket) + " is now " + AiOrderTypeName(newType) + " " +
+                               TicketText(r.ticket) + ": " + levels
+                             : "Changed " + TicketText(was.ticket) + ": " + levels;
          Status(msg, 3, 8000);
          AiLog(msg + before);
          if(cfg.sounds)
             PlaySound("ok.wav");
+         CloseEdit();
+        }
+      else if(r.removed)
+        {
+         // The old order is gone and the new one was refused: the card has nothing left to change.
+         string msg = "No order now: " + AiOrderTypeName(was.type) + " removed, " + AiOrderTypeName(newType) + " refused (" +
+                      ((r.msg != "") ? r.msg : "unknown error") + ")";
+         Status(msg, 2, 15000);
+         AiLog(msg + before);
+         if(cfg.sounds)
+            PlaySound("timeout.wav");
          CloseEdit();
         }
       else

@@ -68,6 +68,8 @@ int AiReadLive(const string symbol, AiLive &out[])
       l.stopLimit = OrderGetDouble(ORDER_PRICE_STOPLIMIT);
       l.timeType = (int)OrderGetInteger(ORDER_TYPE_TIME);
       l.expiration = (datetime)OrderGetInteger(ORDER_TIME_EXPIRATION);
+      l.magic = OrderGetInteger(ORDER_MAGIC);
+      l.comment = OrderGetString(ORDER_COMMENT);
       ArrayResize(out, n + 1, 16);
       out[n] = l;
       n++;

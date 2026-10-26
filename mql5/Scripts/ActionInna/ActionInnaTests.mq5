@@ -110,6 +110,10 @@ void TestModify()
    buy.sl = 1.07750;
    buy.tp = 1.08900;
    Check(AiCheckModify(fx, buy, buy.open, 1.08000, buy.tp, bid, ask) == "", "position: stop moved to break-even passes");
+   AiLive young = buy;
+   young.open = 1.08470;   // the bid is 1 point above the entry, inside the stops level
+   Check(StringFind(AiCheckModify(fx, young, young.open, 1.08470, buy.tp, bid, ask), "Break-even needs the bid 3.0 pips past your entry") >= 0,
+         "position: break-even before the bid is far enough past the entry says so");
    Check(AiCheckModify(fx, buy, buy.open, 1.08200, buy.tp, bid, ask) == "", "position: stop past the open price (locks in profit) passes");
    Check(AiCheckModify(fx, buy, buy.open, 1.08450, buy.tp, bid, ask) == "", "position: SL exactly at the stops level under the bid passes");
    Check(AiCheckModify(fx, buy, buy.open, 1.08460, buy.tp, bid, ask) != "", "position: SL inside the stops level fails");
@@ -133,7 +137,13 @@ void TestModify()
    lim.sl = 1.08100;
    lim.tp = 1.08700;
    Check(AiCheckModify(fx, lim, 1.08200, 1.08000, 1.08600, bid, ask) == "", "buy limit moved lower, SL/TP along, passes");
-   Check(AiCheckModify(fx, lim, 1.08600, 1.08400, 1.09000, bid, ask) != "", "buy limit dragged above the ask fails");
+   Check(AiCheckModify(fx, lim, 1.08600, 1.08400, 1.09000, bid, ask) == "", "buy limit dragged above the ask passes: it becomes a buy stop");
+   fx.orderFlags = SYMBOL_ORDER_MARKET | SYMBOL_ORDER_LIMIT | SYMBOL_ORDER_SL | SYMBOL_ORDER_TP;
+   Check(StringFind(AiCheckModify(fx, lim, 1.08600, 1.08400, 1.09000, bid, ask), "takes no stop orders") >= 0,
+         "on a symbol without stop orders, a buy limit can't become a buy stop");
+   Check(AiCheckModify(fx, lim, 1.08200, 1.08000, 1.08600, bid, ask) == "", "and it can still move below the ask");
+   fx.orderFlags = 0;
+   Check(StringFind(AiCheckModify(fx, lim, ask, 1.08300, 1.08900, bid, ask), "at the market price") >= 0, "a pending entry exactly at the market fails");
    Check(AiCheckModify(fx, lim, 1.08490, 1.08290, 1.08890, bid, ask) != "", "buy limit too close to the ask fails");
    Check(AiCheckModify(fx, lim, 1.08300, 1.08350, 1.08700, bid, ask) != "", "pending SL on the wrong side of the entry fails");
 

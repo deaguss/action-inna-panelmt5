@@ -83,6 +83,42 @@ All notable changes to ActionInna are recorded here. The format follows
   and risk in % of equity or balance. The choice of base holds until the EA's input changes, as on
   the chart. One-click trading isn't offered in the browser.
 - Icons for the side panel: a long-position box, drawn by `scripts/make-icons.mjs`.
+- The side panel's symbol is always the one on TradingView's chart, once the trader allows access
+  with one click. There is no symbol field or checkbox any more; the panel shows the symbol as text.
+  - It covers TradingView's country sites (`id.`, `in.` and the rest), not only `www.`.
+  - It goes by the tab's title when the title and the address name different symbols: the title
+    changes at once when another symbol is picked.
+  - A line under the symbol says where it comes from, or why it stays put: a ticker the broker
+    doesn't have, or no TradingView chart in front.
+  - When no TradingView chart is in front at the start, the panel opens on the symbol last used
+    with the account.
+- A new layout for the side panel: prices in one SELL, spread, BUY bar with the price large; a
+  Market | Pending switch; Risk, Stop loss and Take profit in aligned rows; the numbers and Confirm
+  only while a preview is open, Lots and Risk first; equity and free margin under the account;
+  messages under Confirm; trades as one list.
+- A pending order's entry moved across the market makes it the other type (a Buy Limit dragged above
+  the price becomes a Buy Stop), on the chart and in the browser panel. MT5 can't change an order's
+  type, so it is removed and placed again as the new type, with the same lots, SL/TP, owner (magic),
+  comment, and expiry when the symbol still takes it. Removing first means a failure leaves no order
+  rather than two, and the panel says so. A symbol that takes no stop (or limit) orders keeps the
+  entry on its side, and the card says why.
+- A Break-even button on each open position in the browser panel: the change card with the stop at
+  the entry. Break-even that comes too early (the price not yet past the entry by the broker's stops
+  level) now says how far the price has to go, on the chart as in the browser.
+- Native tests: a fuzz of changes to open trades through the browser panel's requests, at every
+  broker set-up and symbol (about 45,000 changes and 360,000 checks per run). Each change the preview
+  allows must go through and come out exactly as previewed; each change the server would take must
+  not be refused by the preview. Swaps, break-even, stops and freeze levels, and expiries included.
+- Lines on TradingView's chart: the order being prepared (entry, SL with the risk, TP with the
+  reward and R:R), and every open position and pending order on the symbol, dashed. They use
+  TradingView's own order lines, through its internal chart code (not a public interface).
+  - Dragging a preview line changes that level in the panel.
+  - Dragging an open trade's line opens its change card, and the line shows "(not sent)" until
+    the card is confirmed. A pending order's SL and TP move with its entry.
+  - Nothing is sent from the chart. Lines go when the panel closes, and come back when TradingView
+    reloads.
+  - The extension asks for the `scripting` permission to put its two scripts (`tv/`) into
+    TradingView's tab.
 - Releases: `scripts/release.ps1` packs the side panel for the stores (without `dev/` and the
   development key) and the link with the EA for Windows. `docs/publish.md` describes publishing, and
   `docs/privacy.md` is the privacy policy. SECURITY.md describes how the browser panel is guarded.

@@ -207,9 +207,9 @@ enum { POSITION_TYPE = 401, POSITION_TIME_MSC, POSITION_IDENTIFIER };
 enum { POSITION_VOLUME = 411, POSITION_PRICE_OPEN, POSITION_SL, POSITION_TP, POSITION_PROFIT, POSITION_SWAP };
 enum { POSITION_SYMBOL = 421 };
 const int POSITION_TYPE_BUY = 0, POSITION_TYPE_SELL = 1;
-enum { ORDER_TYPE = 431, ORDER_TYPE_TIME, ORDER_TIME_EXPIRATION, ORDER_TIME_SETUP_MSC };
+enum { ORDER_TYPE = 431, ORDER_TYPE_TIME, ORDER_TIME_EXPIRATION, ORDER_TIME_SETUP_MSC, ORDER_MAGIC };
 enum { ORDER_VOLUME_CURRENT = 441, ORDER_PRICE_OPEN, ORDER_SL, ORDER_TP, ORDER_PRICE_STOPLIMIT };
-enum { ORDER_SYMBOL = 451 };
+enum { ORDER_SYMBOL = 451, ORDER_COMMENT };
 enum { DEAL_ENTRY = 461, DEAL_TYPE, DEAL_ORDER, DEAL_TIME };
 enum { DEAL_PRICE = 471 };
 enum { DEAL_SYMBOL = 481 };
@@ -278,7 +278,7 @@ struct FakeObj
    std::map<int, std::string> s;
   };
 struct FakePos { ulong ticket; int type; double volume, open, sl, tp, swap; int64_t timeMsc; std::string symbol; };
-struct FakeOrd { ulong ticket; int type; double volume, price, sl, tp, stoplimit; int typeTime; datetime expiration; std::string symbol; };
+struct FakeOrd { ulong ticket; int type; double volume, price, sl, tp, stoplimit; int typeTime; datetime expiration; std::string symbol; ulong magic = 0; std::string comment; };
 struct FakeSym
   {
    std::string name = "EURUSD";
@@ -624,7 +624,13 @@ inline ulong OrderGetTicket(int i)
    g_fake.selOrd = i;
    return g_fake.ords[i].ticket;
   }
-inline string OrderGetString(int prop) { return (g_fake.selOrd < 0 || prop != ORDER_SYMBOL) ? string() : string(g_fake.ords[g_fake.selOrd].symbol); }
+inline string OrderGetString(int prop)
+  {
+   if(g_fake.selOrd < 0) return string();
+   if(prop == ORDER_SYMBOL) return string(g_fake.ords[g_fake.selOrd].symbol);
+   if(prop == ORDER_COMMENT) return string(g_fake.ords[g_fake.selOrd].comment);
+   return string();
+  }
 inline int64_t OrderGetInteger(int prop)
   {
    if(g_fake.selOrd < 0) return 0;
@@ -633,6 +639,7 @@ inline int64_t OrderGetInteger(int prop)
    if(prop == ORDER_TYPE_TIME) return o.typeTime;
    if(prop == ORDER_TIME_EXPIRATION) return o.expiration;
    if(prop == ORDER_TIME_SETUP_MSC) return (int64_t)g_fake.time * 1000;
+   if(prop == ORDER_MAGIC) return (int64_t)o.magic;
    return 0;
   }
 inline double OrderGetDouble(int prop)
@@ -864,7 +871,7 @@ inline uint FakePending(const MqlTradeRequest &req, MqlTradeResult &res)
               (tt == ORDER_TIME_SPECIFIED) ? SYMBOL_EXPIRATION_SPECIFIED : SYMBOL_EXPIRATION_SPECIFIED_DAY;
    if(s.expiration != 0 && !(s.expiration & flag)) return TRADE_RETCODE_INVALID_EXPIRATION;
    if((tt == ORDER_TIME_SPECIFIED || tt == ORDER_TIME_SPECIFIED_DAY) && req.expiration <= g_fake.time) return TRADE_RETCODE_INVALID_EXPIRATION;
-   FakeOrd o{g_fake.nextTicket++, t, req.volume, req.price, req.sl, req.tp, req.stoplimit, tt, req.expiration, req.symbol.s};
+   FakeOrd o{g_fake.nextTicket++, t, req.volume, req.price, req.sl, req.tp, req.stoplimit, tt, req.expiration, req.symbol.s, req.magic, req.comment.s};
    g_fake.ords.push_back(o);
    res.order = o.ticket;
    res.price = req.price;

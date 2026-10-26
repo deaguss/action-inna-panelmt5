@@ -45,9 +45,12 @@ done by hand, by the owner of the store and repository accounts.
      - `nativeMessaging`: talking to the ActionInna link on the trader's PC, which passes the
        panel's requests to MT5 and back.
      - `storage`: the trader's choices (risk, SL/TP modes, last symbol), kept on this PC.
-     - `https://www.tradingview.com/*`, optional, asked only when "Follow TradingView's symbol" is
-       ticked: the address and title of the TradingView tab in front, to tell its symbol.
-   - Remote code: none.
+     - `scripting`: putting the extension's own two scripts (`tv/page.js`, `tv/bridge.js`) into
+       the TradingView tab, to draw the order's lines on its chart and report a dragged line.
+     - `https://*.tradingview.com/*`, optional: asked with one click the first time the panel
+       opens. The panel reads the address and title of the TradingView tab in front, to tell its
+       symbol, and draws its lines there. It reads nothing else.
+   - Remote code: none. The scripts put into TradingView's tab are files in the package.
    - Data use: answer from [privacy.md](privacy.md). Account and trade data come from the trader's
      own MT5, are shown in the panel and are sent nowhere. Choices stay in the browser's storage.
    - Privacy policy: the address of `docs/privacy.md` on GitHub, once it is on `main`.

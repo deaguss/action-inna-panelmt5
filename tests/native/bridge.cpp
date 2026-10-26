@@ -747,6 +747,246 @@ static void TestBrokers()
         }
   }
 
+//--- changes to open trades, fuzzed ---------------------------------------------------------
+// Changes through the panel's own requests (modPreview, then modSend) at every broker set-up and
+// symbol, with random prices, trades and levels: break-even and stops past it, levels at, inside
+// and across the stops level, pending entries moved across the market (a limit becoming a stop),
+// to the market price, off the tick grid, expiries a new order may or may not carry. The EA's
+// answer is checked both ways against what the fake server takes:
+//   - a change the preview allows goes through, and the server then has exactly what was previewed;
+//   - a change the server would take is not refused by the preview.
+// The safety cap is off here (it has its own tests); SL and TP are required, as by default.
+static bool BuyType(int t) { return t == ORDER_TYPE_BUY_LIMIT || t == ORDER_TYPE_BUY_STOP; }
+
+static std::string Px(double v) { char b[64]; snprintf(b, sizeof b, "%.10g", v); return b; }
+
+struct ChangeStats { int changes = 0, allowed = 0, retyped = 0, breakEven = 0, breakEvenRefused = 0; };
+
+static void FuzzChanges(std::mt19937 &rng, int rounds, ChangeStats &st)
+  {
+   auto I = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
+   auto chance = [&](int pct) { return I(1, 100) <= pct; };
+   for(int b = 0; b < kBrokerCount; b++)
+      for(int j = 0; j < kSymCount; j++)
+        {
+         const BrokerProfile &pr = kBrokers[b];
+         SetUpBridge(std::string("changes: ") + pr.name + ", " + kSyms[j].name, &pr, &kSyms[j]);
+         AiSettings cfg = Cfg();
+         cfg.maxRiskPct = 0.0;
+         s_b.Init(cfg);
+         s_b.Start();
+         Drain();
+         const double pt = g_fake.sym.point;
+         const double tick = g_fake.sym.tickSize;
+         const double spread = g_fake.sym.ask - g_fake.sym.bid;
+         const double mid0 = g_fake.sym.bid;
+         const int stops = std::max(g_fake.sym.stops, 1);
+         auto grid = [&](double v) { return NormalizeDouble(std::round(v / tick) * tick, g_fake.sym.digits); };
+         auto lots = [&]() { return NormalizeDouble(g_fake.sym.volMin + I(0, 4) * g_fake.sym.volStep, 8); };
+         for(int r = 0; r < rounds; r++)
+           {
+            g_fake.pos.clear();
+            g_fake.ords.clear();
+            g_fake.refusals.clear();
+            g_fake.sym.bid = grid(mid0 + I(-300, 300) * pt);
+            g_fake.sym.ask = grid(g_fake.sym.bid + spread);
+            const double bid = g_fake.sym.bid;
+            const double ask = g_fake.sym.ask;
+
+            // A position, in profit or at a loss, with levels the server took.
+            bool posBuy = chance(50);
+            double posPx = posBuy ? bid : ask;   // where it closes
+            double dirSl = posBuy ? -1.0 : 1.0;
+            AddPos(501, posBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL, lots(), grid((posBuy ? ask : bid) + I(-300, 300) * pt),
+                   grid(posPx + dirSl * I(stops + 5, stops + 400) * pt), grid(posPx - dirSl * I(stops + 5, stops + 400) * pt), 1000);
+
+            // A pending order of any of the four types, with an expiry the symbol may no longer take.
+            static const int kTypes[4] = {ORDER_TYPE_BUY_LIMIT, ORDER_TYPE_BUY_STOP, ORDER_TYPE_SELL_LIMIT, ORDER_TYPE_SELL_STOP};
+            int ot = kTypes[I(0, 3)];
+            bool ordBuy = BuyType(ot);
+            bool below = (ot == ORDER_TYPE_BUY_LIMIT || ot == ORDER_TYPE_SELL_STOP);
+            double oprice = grid((ordBuy ? ask : bid) + (below ? -1.0 : 1.0) * I(stops + 5, stops + 400) * pt);
+            double odir = ordBuy ? 1.0 : -1.0;
+            int tt = I(0, 3);
+            datetime exp = (tt == ORDER_TIME_SPECIFIED || tt == ORDER_TIME_SPECIFIED_DAY) ? g_fake.time + I(-3600, 3 * 86400) : 0;
+            g_fake.ords.push_back(FakeOrd{502, ot, lots(), oprice, grid(oprice - odir * I(stops + 5, stops + 300) * pt),
+                                          grid(oprice + odir * I(stops + 5, stops + 300) * pt), 0.0, tt, exp, g_fake.sym.name,
+                                          (ulong)I(0, 9), chance(50) ? "manual" : ""});
+
+            for(int k = 0; k < 12; k++)
+              {
+               bool onOrder = (k % 2 == 1);
+               if(onOrder && g_fake.ords.empty())
+                  continue;
+               st.changes++;
+               std::string fields;
+               std::string what;
+               double wasOpen, wasSl, wasTp;
+               int wasType = 0;
+               ulong ticket;
+               bool buy;
+               // A level for the change: break-even, at or just inside the stops level, across the
+               // price, around the entry, unchanged, none, off the grid, or anywhere on its side.
+               auto level = [&](double was, double from, double dir, double entry) {
+                  double v;
+                  switch(I(0, 9))
+                    {
+                     case 0:
+                     case 1: v = entry; break;
+                     case 2: v = grid(from + dir * stops * pt); break;
+                     case 3: v = grid(from + dir * (stops - 1) * pt); break;
+                     case 4: v = grid(from - dir * I(0, 50) * pt); break;
+                     case 5: v = grid(entry + dir * I(-50, 50) * pt); break;
+                     case 6: v = was; break;
+                     default: v = grid(from + dir * I(1, 500) * pt); break;
+                    }
+                  if(chance(4))
+                     v = 0.0;
+                  else if(chance(8))
+                     v += tick * 0.4;
+                  return v;
+               };
+               if(!onOrder)
+                 {
+                  const FakePos &p = g_fake.pos[0];
+                  buy = (p.type == POSITION_TYPE_BUY);
+                  ticket = p.ticket;
+                  wasOpen = p.open;
+                  wasSl = p.sl;
+                  wasTp = p.tp;
+                  double px = buy ? bid : ask;
+                  double dir = buy ? -1.0 : 1.0;
+                  double sl = level(p.sl, px, dir, p.open);
+                  double tp = level(p.tp, px, -dir, p.open);
+                  fields = Field("ticket", (double)ticket) + "," + Field("sl", sl) + "," + Field("tp", tp);
+                  what = std::string(buy ? "buy" : "sell") + " position open " + Px(p.open) + ", SL " + Px(p.sl) + " -> " + Px(sl) + ", TP " +
+                         Px(p.tp) + " -> " + Px(tp);
+                 }
+               else
+                 {
+                  const FakeOrd &o = g_fake.ords[0];
+                  buy = BuyType(o.type);
+                  ticket = o.ticket;
+                  wasType = o.type;
+                  wasOpen = o.price;
+                  wasSl = o.sl;
+                  wasTp = o.tp;
+                  double ref = buy ? ask : bid;
+                  double open;
+                  switch(I(0, 9))
+                    {
+                     case 0:
+                     case 1:
+                     case 2: open = grid(ref + (chance(50) ? 1.0 : -1.0) * I(stops, stops + 300) * pt); break;   // either side: may cross
+                     case 3: open = ref; break;                                                                  // at the market
+                     case 4: open = grid(ref + (chance(50) ? 1.0 : -1.0) * (stops - 1) * pt); break;            // inside the stops level
+                     case 5: open = o.price; break;
+                     default: open = grid(o.price + I(-200, 200) * pt); break;
+                    }
+                  double d = open - o.price;
+                  double dir = buy ? -1.0 : 1.0;
+                  double sl = chance(70) ? grid(o.sl + d) : level(o.sl, open, dir, open);
+                  double tp = chance(70) ? grid(o.tp + d) : level(o.tp, open, -dir, open);
+                  fields = Field("ticket", (double)ticket) + "," + Field("open", open) + "," + Field("sl", sl) + "," + Field("tp", tp);
+                  what = AiOrderTypeName((ENUM_ORDER_TYPE)o.type).s + " at " + Px(o.price) + " -> " + Px(open) + ", SL " + Px(o.sl) + " -> " +
+                         Px(sl) + ", TP " + Px(o.tp) + " -> " + Px(tp);
+                 }
+               what += ", bid " + Px(bid) + " ask " + Px(ask) + ", stops " + std::to_string(g_fake.sym.stops) + " freeze " +
+                       std::to_string(g_fake.sym.freeze) + ": ";
+
+               JV m = Req("modPreview", fields);
+               const JV &md = m["mod"];
+               double nOpen = onOrder ? md["open"].n : wasOpen;
+               double nSl = md["sl"].n;
+               double nTp = md["tp"].n;
+               double eps = pt * 0.5;
+               bool changed = std::fabs(nOpen - wasOpen) > eps || std::fabs(nSl - wasSl) > eps || std::fabs(nTp - wasTp) > eps;
+
+               // What the server takes, worked out from its own rules.
+               int newType = wasType;
+               bool serverOk = changed && nSl > 0.0 && nTp > 0.0 && g_fake.sym.tradeMode != SYMBOL_TRADE_MODE_DISABLED;
+               if(serverOk && !onOrder)
+                  serverOk = !FakeFrozen(wasSl, buy) && !FakeFrozen(wasTp, buy) && FakeCheckLevels(buy, 0.0, nSl, nTp) == 0;
+               else if(serverOk)
+                 {
+                  double ref = buy ? ask : bid;
+                  if(std::fabs(nOpen - ref) < eps)
+                     serverOk = false;   // no type at the market price
+                  else
+                     newType = buy ? (nOpen < ref ? ORDER_TYPE_BUY_LIMIT : ORDER_TYPE_BUY_STOP) : (nOpen > ref ? ORDER_TYPE_SELL_LIMIT : ORDER_TYPE_SELL_STOP);
+                  if(serverOk && FakeFrozen(wasOpen, !buy))
+                     serverOk = false;
+                  if(serverOk && newType != wasType)
+                    {
+                     // A new order of the other type: the symbol must take it.
+                     bool limit = (newType == ORDER_TYPE_BUY_LIMIT || newType == ORDER_TYPE_SELL_LIMIT);
+                     int tm = g_fake.sym.tradeMode;
+                     if(g_fake.sym.orderMode != 0 && !(g_fake.sym.orderMode & (limit ? SYMBOL_ORDER_LIMIT : SYMBOL_ORDER_STOP)))
+                        serverOk = false;
+                     if(tm == SYMBOL_TRADE_MODE_CLOSEONLY || (tm == SYMBOL_TRADE_MODE_LONGONLY && !buy) || (tm == SYMBOL_TRADE_MODE_SHORTONLY && buy))
+                        serverOk = false;
+                    }
+                  if(serverOk)
+                     serverOk = FakeCheckPendingPrice(newType, nOpen) == 0 && FakeCheckLevels(buy, nOpen, nSl, nTp) == 0;
+                 }
+
+               bool eaOk = m["ok"].b && md["valid"].b;
+               if(!onOrder && std::fabs(nSl - wasOpen) < eps)
+                 {
+                  if(eaOk)
+                     st.breakEven++;
+                  else if(Has(md["err"].s, "Break-even needs"))
+                     st.breakEvenRefused++;
+                 }
+               if(eaOk)
+                 {
+                  st.allowed++;
+                  if(onOrder && newType != wasType)
+                     st.retyped++;
+                 }
+               EXPECT(m["ok"].b, what + "the preview is answered: " + m["err"].s);
+               if(eaOk != serverOk)
+                  EXPECT(false, what + (eaOk ? "the preview allows a change the server refuses" : "the preview refuses a change the server takes: \"" +
+                                                   md["err"].s + "\""));
+               else
+                  EXPECT(true, "");
+               if(eaOk && onOrder)
+                  EXPECT(md["retype"].b == (newType != wasType), what + "the preview says whether the order changes type");
+
+               size_t sentBefore = g_fake.requests.size();
+               JV s = Req("modSend", Quoted("preview", m["preview"].s));
+               if(!eaOk)
+                 {
+                  EXPECT(!s["ok"].b && g_fake.requests.size() == sentBefore, what + "a refused change sends nothing");
+                  continue;
+                 }
+               EXPECT(s["ok"].b, what + "an allowed change goes through: " + s["err"].s);
+               EXPECT(g_fake.refusals.empty(), what + "the server refused nothing");
+               g_fake.refusals.clear();
+               if(!s["ok"].b)
+                  continue;
+               if(!onOrder)
+                 {
+                  const FakePos &p = g_fake.pos[0];
+                  EXPECT(Near(p.sl, nSl, eps) && Near(p.tp, nTp, eps), what + "the server has the previewed SL and TP");
+                 }
+               else if(newType == wasType)
+                 {
+                  EXPECT(g_fake.ords.size() == 1 && g_fake.ords[0].ticket == ticket && Near(g_fake.ords[0].price, nOpen, eps) &&
+                         Near(g_fake.ords[0].sl, nSl, eps) && Near(g_fake.ords[0].tp, nTp, eps), what + "the order is changed as previewed");
+                 }
+               else
+                 {
+                  const FakeOrd *o = g_fake.ords.empty() ? nullptr : &g_fake.ords[0];
+                  EXPECT(g_fake.ords.size() == 1 && o->ticket != ticket && o->type == newType && Near(o->price, nOpen, eps) && Near(o->sl, nSl, eps) &&
+                         Near(o->tp, nTp, eps), what + "the order is replaced by one of the other type, as previewed");
+                  EXPECT(o && (ulong)s["ticket"].n == o->ticket && s["replaced"].b, what + "the reply names the new order");
+                 }
+              }
+           }
+        }
+  }
+
 //--- the link ---------------------------------------------------------------------------
 static void TestHostElection()
   {
@@ -963,9 +1203,19 @@ int main(int argc, char **argv)
    int bridgeFails = s_fail - jsonFails;
    printf("bridge: %d checks over %d broker profiles, %d failed\n", bridgeChecks, kBrokerCount, bridgeFails);
 
+   int rounds = (argc > 3) ? atoi(argv[3]) : 60;
+   ChangeStats st;
+   FuzzChanges(rng, rounds, st);
+   int changeChecks = s_pass + s_fail - jsonChecks - bridgeChecks;
+   int changeFails = s_fail - jsonFails - bridgeFails;
+   printf("changes: %d checks over %d changes (%d broker profiles x %d symbols x %d rounds, seed %u), %d failed\n", changeChecks, st.changes,
+          kBrokerCount, kSymCount, rounds, seed, changeFails);
+   printf("changes: %d allowed and sent, of which %d turned a pending order into the other type and %d set break-even; "
+          "%d break-evens refused as too early\n", st.allowed, st.retyped, st.breakEven, st.breakEvenRefused);
+
    TestHostElection();
    TestLinkKey();
    TestLinkEndToEnd();
-   printf("link: %d checks, %d failed\n", s_pass + s_fail - jsonChecks - bridgeChecks, s_fail - jsonFails - bridgeFails);
+   printf("link: %d checks, %d failed\n", s_pass + s_fail - jsonChecks - bridgeChecks - changeChecks, s_fail - jsonFails - bridgeFails - changeFails);
    return s_fail ? 1 : 0;
   }

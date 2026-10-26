@@ -18,6 +18,7 @@ struct AiSendResult
    double            price;
    double            volume;
    string            msg;
+   bool              removed;      // Replace: the old order is gone, whatever became of the new one
   };
 
 void AiAddFill(ENUM_ORDER_TYPE_FILLING &arr[], const ENUM_ORDER_TYPE_FILLING f)
@@ -84,6 +85,23 @@ ENUM_ORDER_TYPE_TIME AiPendingTime(const AiSpec &s, datetime &expiration)
       return ORDER_TIME_SPECIFIED_DAY;
    expiration = 0;
    return ORDER_TIME_GTC;
+  }
+
+// The expiry an order keeps when it is replaced by one of the other type: its own, when a new
+// order may still carry it (a kind the symbol takes, a date still ahead); else what a new order
+// gets (AiPendingTime).
+ENUM_ORDER_TYPE_TIME AiReplacementTime(const AiSpec &s, const AiLive &l, datetime &expiration)
+  {
+   ENUM_ORDER_TYPE_TIME tt = (ENUM_ORDER_TYPE_TIME)l.timeType;
+   int flag = (tt == ORDER_TIME_GTC) ? SYMBOL_EXPIRATION_GTC : (tt == ORDER_TIME_DAY) ? SYMBOL_EXPIRATION_DAY :
+              (tt == ORDER_TIME_SPECIFIED) ? SYMBOL_EXPIRATION_SPECIFIED : SYMBOL_EXPIRATION_SPECIFIED_DAY;
+   bool dated = (tt == ORDER_TIME_SPECIFIED || tt == ORDER_TIME_SPECIFIED_DAY);
+   if((s.expirationFlags == 0 || (s.expirationFlags & flag) != 0) && (!dated || l.expiration > TimeCurrent()))
+     {
+      expiration = l.expiration;
+      return tt;
+     }
+   return AiPendingTime(s, expiration);
   }
 
 // Plain words for the trade server's return codes.
@@ -386,6 +404,63 @@ public:
          return true;
         }
       r.msg = AiResultText(res);
+      return false;
+     }
+
+   // Turns a pending order into the other type at a new price (a limit into a stop, or back), which
+   // MT5 can't do in place. The old order is removed first and the new one placed after, with its
+   // lots, expiry, owner (magic) and comment: a failure can leave no order, but never two that
+   // could both fill. r.removed says whether the old one is gone.
+   bool              Replace(const AiSpec &s, const AiLive &l, const ENUM_ORDER_TYPE type, const double open, const double sl, const double tp,
+                             AiSendResult &r)
+     {
+      ZeroMemory(r);
+      AiSendResult gone;
+      if(!Remove(l.ticket, gone))
+        {
+         r.retcode = gone.retcode;
+         r.msg = gone.msg;
+         return false;
+        }
+      r.removed = true;
+      datetime expiration = 0;
+      ENUM_ORDER_TYPE_TIME timeType = AiReplacementTime(s, l, expiration);
+      ENUM_ORDER_TYPE_FILLING fills[];
+      int nf = AiFillingOrder(s, true, fills);
+      for(int i = 0; i < nf; i++)
+        {
+         MqlTradeRequest req;
+         MqlTradeResult res;
+         ZeroMemory(req);
+         ZeroMemory(res);
+         req.action = TRADE_ACTION_PENDING;
+         req.symbol = s.symbol;
+         req.volume = l.lots;
+         req.type = type;
+         req.price = open;
+         req.sl = sl;
+         req.tp = tp;
+         req.magic = (ulong)l.magic;
+         req.comment = l.comment;
+         req.type_time = timeType;
+         req.expiration = expiration;
+         req.type_filling = fills[i];
+         ResetLastError();
+         bool sent = OrderSend(req, res);
+         r.retcode = res.retcode;
+         if(res.retcode == TRADE_RETCODE_INVALID_FILL && i < nf - 1)
+            continue;
+         if(sent && (res.retcode == TRADE_RETCODE_DONE || res.retcode == TRADE_RETCODE_PLACED))
+           {
+            r.ok = true;
+            r.ticket = res.order;
+            r.price = open;
+            r.volume = l.lots;
+            return true;
+           }
+         r.msg = AiResultText(res);
+         return false;
+        }
       return false;
      }
   };

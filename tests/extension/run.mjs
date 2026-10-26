@@ -5,6 +5,7 @@
 import * as fmt from '../../extension/lib/format.js';
 import { tickerFromTab } from '../../extension/lib/tv.js';
 import { Link, explainLinkError } from '../../extension/lib/link.js';
+import { wantedLines, parseLineKey } from '../../extension/lib/lines.js';
 
 let pass = 0;
 let fail = 0;
@@ -101,6 +102,15 @@ function testTradingView() {
   same(t('https://nottradingview.com/chart/?symbol=XAUUSD', ''), '', 'a site whose name ends the same');
   same(t('http://localhost/chart?symbol=XAUUSD', ''), '', 'not TradingView');
   same(t('not an address', 'XAUUSD 1'), '', 'not an address');
+  same(t('https://id.tradingview.com/chart/x/?symbol=OANDA%3AXAUUSD', ''), 'OANDA:XAUUSD', 'the Indonesian site');
+  same(t('https://www.tradingview.com/chart/abc/?symbol=OANDA%3AXAUUSD', 'XAUUSD 2,650.12 ▲ +0.45% Unnamed'), 'OANDA:XAUUSD',
+    'address and title agree: the address adds the exchange');
+  same(t('https://www.tradingview.com/chart/abc/?symbol=OANDA%3AXAUUSD', 'EURUSD 1.09120 ▼ −0.10% Unnamed'), 'EURUSD',
+    'another symbol was just picked: the title wins over an address that lags');
+  same(t('https://www.tradingview.com/chart/abc/?symbol=OANDA%3AXAUUSD', 'OANDA:XAUUSD 2,650.12'), 'OANDA:XAUUSD', 'a title with the exchange agrees too');
+  same(t('https://www.tradingview.com/chart/abc/', '(2) XAUUSD 2,650.12 ▲ +0.45%'), 'XAUUSD', 'a count of unread alerts before the symbol');
+  same(t('https://www.tradingview.com/chart/abc/', 'BTCUSDT.P 67,000 ▲ +1.2%'), 'BTCUSDT.P', 'a perpetual future');
+  same(t('https://www.tradingview.com/chart/abc/?symbol=OANDA%3AXAUUSD', 'Unnamed'), 'OANDA:XAUUSD', 'a title without a symbol leaves the address');
 }
 
 //--- the link connection -------------------------------------------------------------
@@ -209,6 +219,53 @@ async function testLink() {
   expect(tries >= 2 && why.length === tries && /not found/.test(why[0]), 'a link that is not installed: it keeps trying');
 }
 
+//--- lines on TradingView's chart ---------------------------------------------------
+function testLines() {
+  const money = (v, withSign) => fmt.money(v, 'USD', 2, withSign);
+  const plan = { pending: false, type: 'BUY', entry: 2650.28, sl: 2645.28, tp: 2660.28, lots: 0.2, riskMoney: 100, riskPct: 1, rewardMoney: 200, rr: 2 };
+  const byKey = (lines) => Object.fromEntries(lines.map((l) => [l.key, l]));
+
+  let L = byKey(wantedLines({ preview: plan, trades: [], card: null, volStep: 0.01, money }));
+  same(Object.keys(L).join(','), 'pv-entry,pv-sl,pv-tp', 'a market preview: entry, SL and TP');
+  expect(!L['pv-entry'].editable && L['pv-entry'].text === 'BUY at market', 'its entry is the market price, not draggable');
+  expect(L['pv-sl'].editable && L['pv-sl'].price === 2645.28 && L['pv-sl'].text === 'SL -$100.00 (1.00%)' && L['pv-sl'].qty === '0.20', 'the SL line carries the risk: ' + L['pv-sl'].text);
+  expect(L['pv-tp'].editable && L['pv-tp'].text === 'TP +$200.00 1:2.00', 'the TP line carries the reward and R:R: ' + L['pv-tp'].text);
+  expect(!L['pv-sl'].trade && !L['pv-sl'].unsent, 'preview lines are not trades');
+
+  L = byKey(wantedLines({ preview: Object.assign({}, plan, { pending: true, type: 'BUY LIMIT', entry: 2640 }), trades: [], card: null, volStep: 0.01, money }));
+  expect(L['pv-entry'].editable && L['pv-entry'].text === 'BUY LIMIT' && L['pv-entry'].price === 2640, "a pending order's entry can be dragged");
+  L = byKey(wantedLines({ preview: Object.assign({}, plan, { tp: 0, rewardMoney: 0, rr: 0 }), trades: [], card: null, volStep: 0.01, money }));
+  expect(!L['pv-tp'], 'no TP: no TP line');
+  same(wantedLines({ preview: null, trades: [], card: null, volStep: 0.01, money }).length, 0, 'nothing previewed, nothing open: no lines');
+  L = byKey(wantedLines({ preview: Object.assign({}, plan, { pending: true, type: 'BUY LIMIT', entry: 2644, sl: 2646.7, lots: 0, riskMoney: 0, riskPct: 0 }), trades: [], card: null, volStep: 0.01, money }));
+  expect(L['pv-entry'] && L['pv-sl'] && L['pv-sl'].price === 2646.7 && L['pv-sl'].qty === '-' && L['pv-sl'].text === 'SL',
+    'a plan MT5 refused (SL above a BUY entry) keeps its lines, to be dragged right');
+
+  const pos = { ticket: 4327679330, kind: 'position', type: 'BUY', side: 1, lots: 0.2, open: 2648.58, sl: 2643.58, tp: 2658.58, profit: 23.4 };
+  const ord = { ticket: 4327679331, kind: 'order', type: 'SELL LIMIT', side: -1, lots: 0.5, open: 2660, sl: 2670, tp: 0, profit: 0, locked: false };
+  const stopLimit = { ticket: 4327679332, kind: 'order', type: 'BUY STOP LIMIT', side: 1, lots: 0.1, open: 2662, sl: 2655, tp: 2680, profit: 0, locked: true };
+  L = byKey(wantedLines({ preview: null, trades: [pos, ord, stopLimit], card: null, volStep: 0.01, money }));
+  const p = 't4327679330-';
+  expect(L[p + 'entry'] && !L[p + 'entry'].editable && L[p + 'entry'].text === 'BUY +$23.40' && L[p + 'entry'].trade, "a position's entry shows its profit and can't be dragged");
+  expect(L[p + 'sl'].editable && L[p + 'tp'].editable && L[p + 'sl'].price === 2643.58, "a position's SL and TP can be dragged");
+  expect(L['t4327679331-entry'].editable && !L['t4327679331-tp'], "a pending order's entry can be dragged; no TP, no TP line");
+  expect(!L['t4327679332-entry'].editable && !L['t4327679332-sl'].editable, "a stop-limit order's lines can't be dragged (MT5 only)");
+
+  L = byKey(wantedLines({ preview: null, trades: [pos], card: { ticket: pos.ticket, open: NaN, sl: 2646.5, tp: NaN }, volStep: 0.01, money }));
+  expect(L[p + 'sl'].price === 2646.5 && L[p + 'sl'].unsent && L[p + 'sl'].text === 'SL (not sent)', "a change on the card shows on the chart, marked as not sent");
+  expect(L[p + 'tp'].price === 2658.58 && !L[p + 'tp'].unsent, 'a typo on the card leaves the line where the server has it');
+  L = byKey(wantedLines({ preview: null, trades: [ord], card: { ticket: ord.ticket, open: 2665, sl: 2675, tp: NaN }, volStep: 0.01, money }));
+  expect(L['t4327679331-entry'].price === 2665 && L['t4327679331-entry'].unsent && L['t4327679331-sl'].price === 2675, "a pending order's new entry and SL show as not sent");
+  L = byKey(wantedLines({ preview: null, trades: [ord], card: { ticket: ord.ticket, open: 2640, sl: 2650, tp: NaN, type: 'SELL STOP' }, volStep: 0.01, money }));
+  same(L['t4327679331-entry'].text, 'SELL STOP (not sent)', 'an order about to change type shows what it becomes');
+
+  same(JSON.stringify(parseLineKey('pv-sl')), '{"ticket":0,"role":"sl"}', 'a preview key');
+  same(JSON.stringify(parseLineKey('t4327679330-entry')), '{"ticket":4327679330,"role":"entry"}', "a trade's key");
+  same(parseLineKey('t12-x'), null, 'an unknown role');
+  same(parseLineKey('pv-sl; alert(1)'), null, 'anything else');
+  same(parseLineKey(undefined), null, 'no key');
+}
+
 function testExplain() {
   same(explainLinkError('Specified native messaging host not found.'), 'The ActionInna link is not installed: run ActionInnaLink.exe --install', 'not installed');
   same(explainLinkError('Access to the specified native messaging host is forbidden.'),
@@ -222,6 +279,7 @@ function testExplain() {
 testFormat();
 testTradingView();
 await testLink();
+testLines();
 testExplain();
 console.log('extension tests: ' + pass + ' checks, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

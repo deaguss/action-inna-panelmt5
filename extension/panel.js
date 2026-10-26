@@ -5,20 +5,24 @@
 import { Link, explainLinkError } from './lib/link.js';
 import * as fmt from './lib/format.js';
 import { tickerFromTab } from './lib/tv.js';
+import { wantedLines, parseLineKey } from './lib/lines.js';
 
 const HOST = 'com.actioninna.link';
-const TV_ORIGINS = ['https://www.tradingview.com/*'];
+const TV_ORIGINS = ['https://*.tradingview.com/*'];   // www and the country sites (id., in., uk., ...)
 const ARM_MS = 300;        // Confirm waits this long after the order changed, against a click on moving numbers
 const ALIVE_MS = 3000;     // MT5 heard within this long (it writes at least once a second)
 const $ = (id) => document.getElementById(id);
 
 const inExtension = typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.connectNative);
 let openPort;
+let browser;   // the browser's tabs, windows and permissions: Chrome's, or the mock's stand-ins
 if (inExtension) {
   openPort = () => chrome.runtime.connectNative(HOST);
+  browser = chrome;
 } else {
   const mock = await import('./dev/mock.js');
   openPort = () => mock.connect();
+  browser = mock.browser;
 }
 const link = new Link(openPort, () => (inExtension && chrome.runtime.lastError ? chrome.runtime.lastError.message : ''));
 
@@ -31,7 +35,6 @@ const prefs = {
   slValue: '',
   tpMode: 'r',
   tpValue: '',
-  followTv: false,
   autoRecall: true,
   riskBase: '',      // 'equity' or 'balance' when the trader chose one
   riskBaseInput: '', // the EA's input when they did
@@ -74,7 +77,13 @@ const S = {
   ticker: '',
   candidates: [],
   candVersion: 0,
-  followed: '',
+  tickerSeq: 0,
+  windowId: null,        // the browser window this panel is in
+  tvAccess: false,       // the trader allowed access to TradingView's tabs
+  tvShown: '',           // the ticker of the TradingView chart in front; '' when none is
+  tvMissing: '',         // that ticker, when this broker has no symbol for it
+  followed: '',          // the TradingView ticker followed last
+  chartTabId: null,      // the TradingView tab it came from, where the panel draws its lines
   side: 0,
   pending: false,
   entry: '',
@@ -191,36 +200,38 @@ link.on('quote', (m) => {
   render();
 });
 
+// A new terminal starts on TradingView's chart, or else on the symbol last used with its account.
 function chooseTerm(id) {
   S.term = id;
   S.symbol = '';
   S.spec = null;
   S.quote = null;
-  const remembered = prefs.symbols[accountKey()];
-  if (prefs.followTv) checkTvTab(true);
-  else if (remembered) setSymbol(remembered);
+  followTab(null, true).then((followed) => {
+    const remembered = prefs.symbols[accountKey()];
+    if (!followed && remembered && S.term === id && !S.symbol) setSymbol(remembered);
+  });
 }
 
-//--- the symbol -------------------------------------------------------------------
-async function resolveTicker(text) {
-  if (!term() || !text) return;
-  const r = await link.request('symbols', { ticker: text }, S.term);
+//--- the symbol: always the one on TradingView ------------------------------------
+// TradingView's ticker to this broker's symbol. Returns the symbol, or '' when the broker has
+// none, or the trader has to choose between several.
+async function resolveTicker(ticker) {
+  if (!term() || !ticker) return '';
+  const seq = ++S.tickerSeq;
+  const r = await link.request('symbols', { ticker }, S.term);
+  if (seq !== S.tickerSeq) return '';
   if (!r.ok) {
     setStatus(r.err, 2, 6000);
     render();
-    return;
+    return '';
   }
   S.ticker = r.ticker;
-  if (r.pick) {
-    S.candidates = [];
-    S.candVersion++;
-    await setSymbol(r.pick);
-  } else {
-    S.candidates = r.candidates || [];
-    S.candVersion++;
-    if (!S.candidates.length) setStatus('This broker has no symbol for ' + r.ticker, 1, 6000);
-  }
+  S.candidates = r.pick ? [] : r.candidates || [];
+  S.candVersion++;
+  S.tvMissing = !r.pick && !S.candidates.length ? r.ticker : '';
+  if (r.pick) await setSymbol(r.pick);
   render();
+  return r.pick || '';
 }
 
 async function chooseCandidate(name) {
@@ -260,45 +271,196 @@ async function setSymbol(sym) {
   render();
 }
 
-async function setFollowTv(on) {
-  if (on && inExtension) {
-    let granted = false;
-    try {
-      granted = await chrome.permissions.request({ origins: TV_ORIGINS });
-    } catch (e) {
-      granted = false;
-    }
-    if (!granted) {
-      on = false;
-      setStatus("Without access to TradingView's tabs, the panel can't follow its symbol", 1, 6000);
-    }
+//--- following TradingView ------------------------------------------------------
+// The panel takes its symbol from the TradingView chart in front of its own window, always. That
+// needs access to TradingView's tabs, which the trader allows once with one click: Chrome asks
+// only on the trader's own gesture.
+async function initFollow() {
+  if (!browser || !browser.tabs) return;
+  try {
+    S.windowId = (await browser.windows.getCurrent()).id;
+  } catch (e) {
+    S.windowId = null;
   }
-  prefs.followTv = on;
-  savePrefs();
-  if (on) checkTvTab(true);
+  try {
+    S.tvAccess = await browser.permissions.contains({ origins: TV_ORIGINS });
+  } catch (e) {
+    S.tvAccess = false;
+  }
+  browser.permissions.onAdded.addListener(tvAccessGranted);
+  browser.permissions.onRemoved.addListener(() => {
+    browser.permissions.contains({ origins: TV_ORIGINS }).then((has) => {
+      S.tvAccess = has;
+      render();
+    }, () => {});
+  });
+  const ours = (windowId) => S.windowId === null || windowId === S.windowId;
+  // A tab brought to the front is looked at again, whatever it showed before.
+  browser.tabs.onActivated.addListener((info) => {
+    if (ours(info.windowId)) followTab(null, true);
+  });
+  // TradingView rewrites its title with every price; only a new ticker counts.
+  browser.tabs.onUpdated.addListener((id, change, tab) => {
+    if ((change.title || change.url) && tab && tab.active && ours(tab.windowId)) followTab(tab, false);
+  });
+  browser.tabs.onRemoved.addListener((tabId) => {
+    if (tabId === S.chartTabId) S.chartTabId = null;
+  });
+  // A line dragged on TradingView's chart (tv/bridge.js), from the tab the panel draws on.
+  browser.runtime.onMessage.addListener((msg, sender) => {
+    if (msg && msg.t === 'ai-moved' && sender && sender.tab && sender.tab.id === S.chartTabId) lineMoved(msg.key, Number(msg.price));
+  });
+}
+
+function tvAccessGranted() {
+  if (S.tvAccess) return;
+  S.tvAccess = true;
+  followTab(null, true);
   render();
 }
 
-async function checkTvTab(force) {
-  if (!prefs.followTv || !inExtension || !term()) return;
-  let tab = null;
-  try {
-    [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  } catch (e) {
-    return;
-  }
-  if (!tab) return;
-  const ticker = tickerFromTab(tab.url || '', tab.title || '');
-  if (!ticker || (ticker === S.followed && !force)) return;
-  S.followed = ticker;
-  resolveTicker(ticker);
+// Called straight from a click, for Chrome to show its prompt.
+function allowTv() {
+  browser.permissions.request({ origins: TV_ORIGINS }).then((granted) => {
+    if (granted) tvAccessGranted();
+    else setStatus('The panel takes its symbol from TradingView, so it needs that access. Press Allow when you are ready', 1, 8000);
+    render();
+  }, () => {});
 }
 
-if (inExtension && chrome.tabs) {
-  chrome.tabs.onActivated.addListener(() => checkTvTab(false));
-  chrome.tabs.onUpdated.addListener((id, change) => {
-    if (change.title || change.url) checkTvTab(false);
+// Follows the ticker of the TradingView chart in front when it changed, or always with force.
+// tab: the tab an event named, or null to look. True when the panel took a broker symbol from it.
+async function followTab(tab, force) {
+  if (!browser || !browser.tabs || !S.tvAccess || !term()) return false;
+  if (!tab) {
+    try {
+      [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    } catch (e) {
+      return false;
+    }
+  }
+  const ticker = tab ? tickerFromTab(tab.url || '', tab.title || '') : '';
+  if (ticker && tab.id !== undefined) S.chartTabId = tab.id;
+  if (ticker !== S.tvShown) {
+    S.tvShown = ticker;
+    render();
+  }
+  if (!ticker) return false;
+  if (ticker === S.followed && !force) return !!S.symbol;
+  S.followed = ticker;
+  return !!(await resolveTicker(ticker));
+}
+
+// What the line under the symbol says, and whether it is a warning.
+function followText() {
+  if (!S.tvAccess || !term()) return { text: '', warn: false };
+  const staying = 'the panel stays on ' + (S.symbol || 'no symbol');
+  if (!S.tvShown) return { text: 'No TradingView chart in front: ' + staying, warn: false };
+  if (S.tvMissing) return { text: 'TradingView shows ' + S.tvMissing + ', which this broker does not have: ' + staying, warn: true };
+  if (S.candidates.length) return { text: '', warn: false };
+  return { text: 'From TradingView: ' + S.tvShown, warn: false };
+}
+
+//--- lines on TradingView's chart ------------------------------------------------
+// The preview and the open trades on the panel's symbol, drawn on the TradingView chart it follows
+// (tv/page.js), and lines the trader drags there brought back. A drag changes only what the panel
+// shows: nothing reaches MT5 before a Confirm in the panel.
+const CHART_RESEND_MS = 2000;   // tv/page.js takes the lines away when they stop coming (the panel closed)
+const chartSent = { tabId: null, sig: '', at: 0 };
+
+function chartLines() {
+  if (!S.tvAccess || !S.symbol || !S.spec || S.tvMissing || S.candidates.length) return [];
+  const p = S.side && S.plan ? S.plan : null;
+  const c = S.card && S.card.kind === 'mod' ? S.card : null;
+  return wantedLines({
+    preview: p ? Object.assign({ pending: S.pending }, p) : null,
+    trades: trades().filter((x) => x.symbol === S.symbol),
+    card: c ? {
+      ticket: c.ticket,
+      open: fmt.parseLevel(c.open),
+      sl: fmt.parseLevel(c.sl),
+      tp: fmt.parseLevel(c.tp),
+      type: c.result && c.result.retype ? c.result.type : '',
+    } : null,
+    volStep: S.spec.volStep,
+    money,
   });
+}
+
+// Sends the lines when they changed, and every 2 s anyway.
+function syncChart() {
+  if (!browser || !browser.scripting) return;
+  if (S.chartTabId !== chartSent.tabId) {
+    if (chartSent.tabId !== null) sendLines(chartSent.tabId, []);
+    chartSent.tabId = S.chartTabId;
+    chartSent.sig = '';
+  }
+  if (S.chartTabId === null) return;
+  const lines = chartLines();
+  const sig = JSON.stringify(lines);
+  if (sig === chartSent.sig && Date.now() - chartSent.at < CHART_RESEND_MS) return;
+  chartSent.sig = sig;
+  chartSent.at = Date.now();
+  sendLines(S.chartTabId, lines);
+}
+
+// When the tab doesn't have the scripts yet (a new tab, or TradingView reloaded), puts them in first.
+async function sendLines(tabId, lines) {
+  const msg = { t: 'ai-lines', lines };
+  try {
+    await browser.tabs.sendMessage(tabId, msg);
+  } catch (e) {
+    if (!lines.length) return;
+    try {
+      await browser.scripting.executeScript({ target: { tabId }, files: ['tv/bridge.js'] });
+      await browser.scripting.executeScript({ target: { tabId }, files: ['tv/page.js'], world: 'MAIN' });
+      await browser.tabs.sendMessage(tabId, msg);
+    } catch (e2) {
+      // a page the panel may not draw on: no lines there
+    }
+  }
+}
+
+// A preview line dragged sets that level as a price; an open trade's opens its change card, as a
+// drag on the MT5 chart does. Prices far from the market are not taken.
+function lineMoved(key, price) {
+  const k = parseLineKey(key);
+  const q = S.quote;
+  if (!k || !S.spec || !q || !(price > 0) || Math.abs(price - (q.bid + q.ask) / 2) > (q.bid + q.ask) / 4) return;
+  const text = fmt.price(price, S.spec.digits);
+  if (!k.ticket) {
+    if (!S.side || S.sending) return;
+    if (k.role === 'sl') {
+      prefs.slMode = 'price';
+      prefs.slValue = text;
+    } else if (k.role === 'tp') {
+      prefs.tpMode = 'price';
+      prefs.tpValue = text;
+    } else if (k.role === 'entry' && S.pending) {
+      S.entry = text;
+      S.entrySet = true;
+    } else return;
+    setStatus('Moved on the chart. Check the numbers, then confirm', 0, 3000);
+    changed();
+    return;
+  }
+  const x = findTrade(k.ticket);
+  if (!x || x.symbol !== S.symbol || x.locked || (k.role === 'entry' && x.kind !== 'order')) return;
+  if (!S.card || S.card.kind !== 'mod' || S.card.ticket !== x.ticket) openCard('mod', x);
+  const c = S.card;
+  if (c.busy) return;
+  if (k.role === 'entry') {
+    // A pending order's SL and TP move with its entry, as on the MT5 chart.
+    const was = fmt.parseLevel(c.open) || x.open;
+    const sl = fmt.parseLevel(c.sl);
+    const tp = fmt.parseLevel(c.tp);
+    c.open = text;
+    if (sl > 0) c.sl = fmt.price(sl + price - was, S.spec.digits);
+    if (tp > 0) c.tp = fmt.price(tp + price - was, S.spec.digits);
+  } else c[k.role] = text;
+  c.at = Date.now();
+  scheduleCardPreview(0);
+  render();
 }
 
 //--- the new order ----------------------------------------------------------------
@@ -584,6 +746,16 @@ function openCard(kind, x) {
   render();
 }
 
+// The change card with the stop at the entry. MT5 decides whether the price is far enough past it
+// yet, and the card says so either way.
+function breakEven(x) {
+  openCard('mod', x);
+  S.card.sl = fmt.price(x.open, x.digits);
+  S.card.at = Date.now();
+  scheduleCardPreview(0);
+  render();
+}
+
 function scheduleCardPreview(ms) {
   clearTimeout(cardTimer);
   cardTimer = setTimeout(cardPreview, ms === undefined ? 200 : ms);
@@ -653,11 +825,20 @@ async function cardConfirm() {
     render();
     return;
   }
+  // A type change whose new order was refused after the old one was removed: there is no order left
+  // for the card to change, and the message says so.
+  if (r.removed) {
+    setStatus(r.err, 2, 30000);
+    if (S.card === c) S.card = null;
+    render();
+    return;
+  }
   if (S.card !== c) return;
   c.busy = false;
   if (r.ok) {
     const x = c.trade;
     if (c.kind === 'close') setStatus('Closed ' + fmt.lots(r.lots, 0.01) + ' of ' + x.type + ' ' + x.symbol + ' at ' + fmt.price(r.price, x.digits), 3, 8000);
+    else if (c.kind === 'mod' && r.replaced) setStatus(x.type + ' #' + x.ticket + ' is now ' + r.type + ' #' + r.ticket + ' ' + x.symbol, 3, 8000);
     else if (c.kind === 'mod') setStatus('Changed #' + x.ticket + ' ' + x.symbol, 3, 6000);
     else setStatus('Removed ' + x.type + ' #' + x.ticket + ' ' + x.symbol, 3, 6000);
     S.card = null;
@@ -709,16 +890,19 @@ function render() {
     mode.textContent = i.tradeMode === 'real' ? 'REAL' : i.tradeMode === 'contest' ? 'CONTEST' : 'DEMO';
     mode.className = 'badge' + (i.tradeMode === 'real' ? ' real' : '');
   }
+  // Under the account: what stops trading when something does, else the account's money.
   let conn = S.linkText;
   let connLevel = 'muted';
   if (i) {
+    const tr = t && t.trades;
     if (!alive(S.term)) { conn = 'MT5 is not answering'; connLevel = 'warnText'; }
     else if (!i.connected) { conn = 'MT5 is not connected to ' + i.server; connLevel = 'warnText'; }
     else if (i.problem) { conn = i.problem; connLevel = 'warnText'; }
-    else conn = 'Connected' + (i.marginMode !== 'hedging' ? ' (' + i.marginMode + ' account)' : '');
+    else if (tr) conn = 'Equity ' + money(tr.equity) + ' · Free ' + money(tr.freeMargin) + (i.marginMode !== 'hedging' ? ' · ' + i.marginMode : '');
+    else conn = 'Connected';
   }
   $('conn').textContent = conn;
-  $('conn').className = connLevel;
+  $('conn').className = connLevel + ' grow';
   $('startMt5').hidden = !link.connected || S.terms.size > 0 || S.linkState === 'starting-mt5' || S.linkState === 'busy';
   const terms = $('terms');
   $('termRow').hidden = S.terms.size < 2;
@@ -734,9 +918,13 @@ function render() {
   }
 
   // Symbol and price
-  setValue($('symbol'), S.symbol);
-  $('followTv').checked = prefs.followTv;
-  $('followTv').disabled = !inExtension;
+  $('symbol').textContent = S.symbol || 'No symbol yet';
+  $('symbol').className = 'symbolName' + (S.symbol ? '' : ' muted');
+  $('followAsk').hidden = !(browser && browser.tabs && !S.tvAccess);
+  const note = followText();
+  $('followNote').textContent = note.text;
+  $('followNote').hidden = !note.text;
+  $('followNote').className = 'small ' + (note.warn ? 'warnText' : 'muted');
   const cands = $('cands');
   cands.hidden = S.candidates.length === 0;
   if (cands.dataset.version !== String(S.candVersion)) {
@@ -752,9 +940,7 @@ function render() {
   const spec = S.spec;
   const q = S.quote;
   const d = spec ? spec.digits : 5;
-  $('bid').textContent = q ? fmt.price(q.bid, d) : '-';
-  $('ask').textContent = q ? fmt.price(q.ask, d) : '-';
-  $('spread').textContent = q ? 'spread ' + fmt.pips(q.spreadPips) : (S.symbol ? 'waiting for prices' : 'no symbol');
+  $('spread').textContent = q ? fmt.pips(q.spreadPips) : '-';
   $('sellPx').textContent = q ? fmt.price(q.bid, d) : '-';
   $('buyPx').textContent = q ? fmt.price(q.ask, d) : '-';
 
@@ -764,8 +950,8 @@ function render() {
   $('buy').setAttribute('aria-pressed', String(S.side > 0));
   $('sell').disabled = !ready;
   $('buy').disabled = !ready;
-  $('kind').textContent = S.pending ? 'Pending' : 'Market';
-  $('kind').setAttribute('aria-pressed', String(S.pending));
+  $('kindMarket').setAttribute('aria-pressed', String(!S.pending));
+  $('kindPending').setAttribute('aria-pressed', String(S.pending));
   $('entryRow').hidden = !S.pending;
   setValue($('entry'), S.entry);
   const st = settings();
@@ -788,7 +974,8 @@ function render() {
   const p = S.side ? S.plan : null;
   const has = p && p.lots > 0;
   $('nLots').textContent = has ? fmt.lots(p.lots, spec.volStep) : '-';
-  $('nRisk').textContent = has && p.riskMoney > 0 ? money(-p.riskMoney) + '  (' + p.riskPct.toFixed(2) + '%)' : '-';
+  $('planBox').hidden = !S.side;
+  $('nRisk').textContent = has && p.riskMoney > 0 ? money(-p.riskMoney) + ' (' + p.riskPct.toFixed(2) + '%)' : '-';
   $('nRisk').className = has && p.riskMoney > 0 ? 'dangerText' : '';
   $('nReward').textContent = has && p.tp > 0 ? money(p.rewardMoney, true) + '  (' + p.rewardPct.toFixed(2) + '%)' : '-';
   $('nReward').className = has && p.tp > 0 ? 'goodText' : '';
@@ -814,7 +1001,7 @@ function render() {
     text = 'Netting account: this order merges with any open position on the symbol and replaces its SL/TP';
     level = 1;
   } else if (S.side) text = 'Check the numbers, then confirm. Nothing is sent before that';
-  else if (!S.symbol && t) text = prefs.followTv ? 'Open a TradingView chart, or type a symbol' : 'Type a symbol, or follow TradingView';
+  else if (!S.symbol && t) text = S.tvAccess ? 'Open a TradingView chart' : 'Allow access to TradingView: the panel takes its symbol from its chart';
   if (S.status.text && Date.now() < S.status.until && S.status.level >= level) {
     text = S.status.text;
     level = S.status.level;
@@ -824,16 +1011,16 @@ function render() {
 
   const btn = $('confirm');
   if (S.sending) btn.textContent = 'Sending…';
-  else if (!S.side) btn.textContent = 'Press SELL or BUY';
+  else if (!S.side) btn.textContent = 'Confirm';
   else {
     const what = p && S.pending ? p.type : S.side > 0 ? 'BUY' : 'SELL';
     btn.textContent = (S.pending ? 'Place ' : 'Confirm ') + what + (has ? ' ' + fmt.lots(p.lots, spec.volStep) + ' lots' : '');
   }
   btn.className = 'confirm grow' + (S.side > 0 ? ' buy' : S.side < 0 ? ' sell' : '');
   btn.disabled = !canConfirm();
-  $('cancelPreview').hidden = !S.side;
 
   renderTrades();
+  syncChart();
 }
 
 // Rows are kept per ticket and only their texts change, so a click on a button never lands on a row
@@ -852,12 +1039,13 @@ function makeRow(x) {
   const add = (label, kind) => {
     const b = el('button', '', label);
     b.type = 'button';
-    b.addEventListener('click', () => openCard(kind, r.x));
+    b.addEventListener('click', () => (kind === 'be' ? breakEven(r.x) : openCard(kind, r.x)));
     acts.append(b);
   };
   if (x.kind === 'position') {
     add('Close', 'close');
     add('Change SL/TP', 'mod');
+    add('Break-even', 'be');
   } else {
     if (!x.locked) add('Change', 'mod');
     add('Remove', 'cancel');
@@ -868,8 +1056,6 @@ function makeRow(x) {
 
 function renderTrades() {
   const list = trades();
-  const tr = term() && term().trades;
-  $('acct').textContent = tr ? 'Balance ' + money(tr.balance) + ' · Equity ' + money(tr.equity) + ' · Free ' + money(tr.freeMargin) : '';
   $('noTrades').hidden = list.length > 0;
   const ul = $('trades');
   const seen = new Set();
@@ -903,7 +1089,7 @@ function renderTrades() {
 let cardView = null;
 
 function buildCard(c) {
-  const v = { card: c };
+  const v = { card: c, inputs: {} };
   const x = c.trade;
   const kids = [];
   v.title = el('strong', '');
@@ -921,6 +1107,7 @@ function buildCard(c) {
       scheduleCardPreview();
       render();
     });
+    v.inputs[key] = input;
     row.append(input);
     return row;
   };
@@ -962,6 +1149,8 @@ function renderCard() {
   }
   if (!cardView || cardView.card !== c) cardView = buildCard(c);
   const v = cardView;
+  // A level dragged on TradingView's chart arrives in the card; a field being typed in keeps its text.
+  for (const [key, input] of Object.entries(v.inputs)) setValue(input, c[key]);
   const x = c.trade;
   const r = c.result;
   v.title.textContent = { close: 'Close ', mod: 'Change ', cancel: 'Remove ' }[c.kind] + x.type + ' ' + fmt.trimZeros(String(x.lots)) + ' ' + x.symbol + ' #' + x.ticket;
@@ -997,22 +1186,20 @@ function wire() {
     chooseTerm(e.target.value);
     render();
   });
-  const go = () => resolveTicker($('symbol').value.trim());
-  $('symbolGo').addEventListener('click', go);
-  $('symbol').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') go();
-  });
-  $('followTv').addEventListener('change', (e) => setFollowTv(e.target.checked));
+  $('followAllow').addEventListener('click', allowTv);
   $('sell').addEventListener('click', () => onSide(-1));
   $('buy').addEventListener('click', () => onSide(1));
-  $('kind').addEventListener('click', () => {
-    S.pending = !S.pending;
-    if (S.pending) {
+  const setPending = (on) => {
+    if (S.pending === on) return;
+    S.pending = on;
+    if (on) {
       S.entry = defaultEntry();
       S.entrySet = false;
     }
     changed();
-  });
+  };
+  $('kindMarket').addEventListener('click', () => setPending(false));
+  $('kindPending').addEventListener('click', () => setPending(true));
   $('entry').addEventListener('input', (e) => {
     S.entry = e.target.value;
     S.entrySet = true;
@@ -1074,6 +1261,7 @@ function wire() {
 }
 
 await loadPrefs();
+await initFollow();
 wire();
 render();
 link.start();

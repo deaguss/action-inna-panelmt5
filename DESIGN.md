@@ -35,7 +35,14 @@ except where this table says otherwise.
 
 | Area | Decision | Reason |
 |---|---|---|
-| Layout | The chart panel's column, then the open trades with their cards | The order in which a trade is decided; the list stands in for the chart's trade lines |
+| Layout | Three sections: the account; the symbol, its prices and the order form; the open trades with their cards | The order in which a trade is decided; the list stands in for the chart's trade lines |
+| Header | The account and DEMO/REAL; under it equity and free margin, or, in amber, whatever stops trading | One line that is useful whether things are fine or not |
+| Prices | SELL, spread, BUY in one bar; the price is the large type, the side name small | The number a trader reads is the price; one place for it, not a quote line repeating the buttons |
+| Order type | Market and Pending as one two-part switch, the entry beside it | A single toggle labelled with its state reads as an action; both choices visible say which is on |
+| Rows | One label column for Risk, Stop loss and Take profit; unit and mode buttons of one width | The fields start and end at the same place, so the eye runs down one column |
+| Numbers | Only while a preview is open: Lots and Risk in large type first, the rest below; two pairs to a row on a wide panel | Idle, SELL/BUY are the focal point; previewing, Confirm and what it risks are |
+| Messages | Under Confirm, taking no room when there is none; on a card, above its Confirm with two lines kept | Nothing above a Confirm button may move it under the cursor |
+| Trades | Rows parted by a line, actions small; the card the one bordered surface | A list reads as one list; the change being made stands out |
 | Width | Works from 320px, Chrome's narrowest side panel | The panel shares the window with the chart |
 | Redraws | Built once and updated in place four times a second; trade rows kept per ticket; a card built once per opening | A redraw never takes a click, a cursor or an open list |
 | Confirm | Off until MT5's numbers for the latest input are in, then 0.3 s more | A click on numbers that just changed is not a decision on them |
@@ -43,6 +50,9 @@ except where this table says otherwise.
 | Status | An error or warning about the plan beats a passing message | What stops the order has to be seen at once |
 | Lost answers | "May have gone through: check Open trades", never "not sent" | A trader who believes nothing was sent may send it twice |
 | Keyboard | Tab through every control, Enter in the symbol field, Esc closes a card or the preview; no global hotkeys | The browser's and TradingView's shortcuts stay theirs |
+| Symbol | Always the TradingView chart's, shown as text with a line saying where it comes from or why it stays put; nothing to type | The trader picks the chart in TradingView; the panel should never make them pick it twice |
+| Chart lines | TradingView's own order lines: entry grey, SL red, TP green, with the money on them; preview solid, open trades dashed, a change not sent yet solid with "(not sent)" | The colours of the chart panel's levels, in the line style traders know from TradingView's broker connections |
+| Dragging lines | Changes the preview, or opens the trade's change card; never sends | The same deliberate second press as on the MT5 chart |
 | Options | The chart menu's auto SL/TP and risk base, folded under Options; no one-click trading | Set once and left alone; in a browser, a stray click is closer at hand than on a chart |
 | Icon | A long-position box: TP above the entry line, SL below, at 2R, on the dark panel colour | Traders know the shape from TradingView's position tool, and it still reads at 16px |
 | Theme | Follows the browser (`prefers-color-scheme`), with the colours below | No chart background to follow |

@@ -511,21 +511,37 @@ string AiCheckModify(const AiSpec &s, const AiLive &l, const double open, const 
      }
    if(l.isOrder)
      {
+      // An entry moved across the market makes the order the other type (AiBuildModPlan), which
+      // goes to the server as a new order: it must be one the symbol takes.
       bool okType = false;
       ENUM_ORDER_TYPE t = AiResolveType(l.side, true, open, bid, ask, okType);
-      if(!okType || t != l.type)
+      if(!okType)
+         return "The entry is at the market price: move it above or below";
+      if(t != l.type)
         {
-         bool below = (l.type == ORDER_TYPE_BUY_LIMIT || l.type == ORDER_TYPE_SELL_STOP);
-         return "A " + AiOrderTypeName(l.type) + " must stay " + (below ? "below" : "above") + " the market price";
+         string mode = AiCheckTradeMode(s, t, sl, tp);
+         bool limitNow = (t == ORDER_TYPE_BUY_LIMIT || t == ORDER_TYPE_SELL_LIMIT);
+         bool wasBelow = (l.type == ORDER_TYPE_BUY_LIMIT || l.type == ORDER_TYPE_SELL_STOP);
+         if(mode != "" && s.orderFlags != 0 && (s.orderFlags & (limitNow ? SYMBOL_ORDER_LIMIT : SYMBOL_ORDER_STOP)) == 0)
+            return "This symbol takes no " + (limitNow ? "limit" : "stop") + " orders: keep the entry " + (wasBelow ? "below" : "above") + " the price";
+         if(mode != "")
+            return mode;
         }
-      return AiCheckStops(s, l.type, open, sl, tp, bid, ask);
+      return AiCheckStops(s, t, open, sl, tp, bid, ask);
      }
    double minDist = MathMax((double)s.stopsLevel, 1.0) * s.point;
    string minTxt = (s.stopsLevel > 0) ? " (broker minimum " + DoubleToString(AiSafeDiv(minDist, s.pipSize), 1) + " pips)" : "";
    // A buy closes at the bid, a sell at the ask.
    double px = buy ? bid : ask;
    if(sl > 0.0 && (px - sl) * l.side < minDist - eps)
+     {
+      // A stop at the entry (break-even) needs the price that far past the entry first.
+      if(MathAbs(sl - l.open) <= eps)
+         return "Break-even needs the " + (buy ? "bid" : "ask") +
+                ((s.stopsLevel > 0) ? " " + DoubleToString(AiSafeDiv(minDist, s.pipSize), 1) + " pips" : "") + " past your entry: " +
+                (buy ? "bid " : "ask ") + AiPriceStr(s, px) + ", entry " + AiPriceStr(s, l.open);
       return ((px - sl) * l.side <= 0.0) ? "Stop loss must stay " + (buy ? "below" : "above") + " the price" : "Stop loss is too close to the price" + minTxt;
+     }
    if(tp > 0.0 && (tp - px) * l.side < minDist - eps)
       return ((tp - px) * l.side <= 0.0) ? "Take profit must stay " + (buy ? "above" : "below") + " the price" : "Take profit is too close to the price" + minTxt;
    return "";
@@ -645,6 +661,15 @@ void AiBuildModPlan(const AiSpec &s, const AiLive &l, const double open, const d
       m.err = "Waiting for " + s.symbol + " prices from the broker...";
       return;
      }
+   m.type = l.type;
+   if(l.isOrder && !AiIsStopLimit(l.type))
+     {
+      bool okType = false;
+      ENUM_ORDER_TYPE t = AiResolveType(l.side, true, m.open, tick.bid, tick.ask, okType);
+      if(okType)
+         m.type = t;
+      m.retype = (m.type != l.type);
+     }
    double comm = MathMax(cfg.commissionRT, 0.0) * l.lots;
    double pnl = 0.0;
    if(m.sl > 0.0 && AiPnlAt(s, l.side, l.lots, m.open, m.sl, pnl))
@@ -690,6 +715,9 @@ void AiBuildModPlan(const AiSpec &s, const AiLive &l, const double open, const d
         }
       m.warn = capTxt;
      }
+   if(m.retype)
+      m.warn = "Becomes a " + AiOrderTypeName(m.type) + ": the " + AiOrderTypeName(l.type) + " is removed, a new order placed" +
+               ((m.warn != "") ? ". " + m.warn : "");
    m.valid = m.changed;
   }
 

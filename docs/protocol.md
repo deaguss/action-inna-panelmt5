@@ -285,12 +285,21 @@ This is `AiBuildPlan`, as on the chart.
 {"t":"modPreview","id":7,"ticket":4327679330,"sl":2647.00,"tp":2660.58}
 -> {"t":"reply","id":7,"ok":true,"preview":"p2","mod":{"valid":true,"changed":true,"err":"","warn":"",
     "open":2650.58,"sl":2647.0,"tp":2660.58,"slMoney":-71.6,"slPct":-0.72,"oldSlMoney":-100,"tpMoney":200,
-    "tpPct":2,"rr":2.79,"slPips":35.8,"tpPips":100}}
-{"t":"modSend","id":8,"preview":"p2"}  -> {"t":"reply","id":8,"ok":true,"ticket":4327679330}
+    "tpPct":2,"rr":2.79,"slPips":35.8,"tpPips":100,"type":"BUY","retype":false}}
+{"t":"modSend","id":8,"preview":"p2"}  -> {"t":"reply","id":8,"ok":true,"ticket":4327679330,"type":"BUY","replaced":false}
 ```
 
 - A pending order may also send `open`, its new entry.
 - This is `AiBuildModPlan`, as on the chart's modify card.
+- `type` is the trade's type after the change. A pending entry moved across the market makes the
+  order the other type (a BUY LIMIT moved above the ask becomes a BUY STOP): `retype` is true, and
+  `warn` says so. MT5 can't change an order's type, so `modSend` removes the order, then places one
+  of the new type with the same lots, SL/TP, owner (magic) and comment, and the expiry when a new
+  order may still carry it. Its reply has `"replaced":true` and the new order's `ticket`.
+- If the new order is refused after the old one was removed, the reply is `ok:false` with
+  `"removed":true`: no order is pending, and `err` says so.
+- Break-even (the stop at the entry) is allowed once the price is past the entry by the broker's
+  stops level; before that, `err` says how far it has to go.
 
 ### `closePreview` / `close`: close a position, or part of it
 

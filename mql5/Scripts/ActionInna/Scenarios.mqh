@@ -207,8 +207,8 @@ void SuiteStopsOracle(const int n)
   }
 
 // AiCheckModify against an independent version written in whole points: a position's levels count
-// from the market, a pending order keeps its type, and the freeze level applies to what the server
-// has now.
+// from the market, a pending order moved across the market becomes the other type when the symbol
+// takes that type, and the freeze level applies to what the server has now.
 void SuiteModifyOracle(const int n)
   {
    string suite = "Changes to open trades against a whole-point reference";
@@ -221,6 +221,9 @@ void SuiteModifyOracle(const int n)
       s.tickSize = s.point;
       s.tradeMode = SYMBOL_TRADE_MODE_FULL;
       s.freezeLevel = RndChance(3) ? RndInt(1, 100) : 0;
+      // A symbol that takes no stop orders, or no limit orders, now and then.
+      if(RndChance(4))
+         s.orderFlags = SYMBOL_ORDER_MARKET | SYMBOL_ORDER_SL | SYMBOL_ORDER_TP | (RndChance(2) ? SYMBOL_ORDER_LIMIT : SYMBOL_ORDER_STOP);
       int bidPts = RndInt(1000, 2000000);
       int askPts = bidPts + RndInt(0, 50);
       int side = RndChance(2) ? AI_BUY : AI_SELL;
@@ -266,18 +269,14 @@ void SuiteModifyOracle(const int n)
         }
       if(expectOk && l.isOrder)
         {
-         bool keepsType = false;
-         if(l.type == ORDER_TYPE_BUY_LIMIT)
-            keepsType = (newOpenPts < askPts);
-         else if(l.type == ORDER_TYPE_BUY_STOP)
-            keepsType = (newOpenPts > askPts);
-         else if(l.type == ORDER_TYPE_SELL_LIMIT)
-            keepsType = (newOpenPts > bidPts);
-         else
-            keepsType = (newOpenPts < bidPts);
          int marketPts = buy ? askPts : bidPts;
-         if(!keepsType)
-            expectOk = false;
+         bool limitWas = (l.type == ORDER_TYPE_BUY_LIMIT || l.type == ORDER_TYPE_SELL_LIMIT);
+         bool limitNow = buy ? (newOpenPts < askPts) : (newOpenPts > bidPts);
+         int needs = limitNow ? SYMBOL_ORDER_LIMIT : SYMBOL_ORDER_STOP;
+         if(newOpenPts == marketPts)
+            expectOk = false;   // no type at the market price
+         else if(limitNow != limitWas && s.orderFlags != 0 && (s.orderFlags & needs) == 0)
+            expectOk = false;   // it would become a type the symbol does not take
          else if(slPts > 0 && (buy ? slPts >= newOpenPts : slPts <= newOpenPts))
             expectOk = false;
          else if(tpPts > 0 && (buy ? tpPts <= newOpenPts : tpPts >= newOpenPts))

@@ -14,9 +14,18 @@ sold or shared, because nothing leaves your PC.
   the options, and the symbol you last used on each account. These are kept in the browser's storage
   for this extension (`chrome.storage.local`), on this PC only, so the panel opens the way you left
   it. The last symbol is filed under the account's login and server.
-- **TradingView tabs, only if you tick "Follow TradingView's symbol":** the browser then asks you
-  for access to `tradingview.com`. The panel reads the address and title of the TradingView tab in
-  front, to tell which symbol it shows. It reads nothing else on any page and adds nothing to them.
+- **TradingView tabs, once you allow it:** the panel takes its symbol from TradingView's chart, after
+  you allow access to `tradingview.com` and its country sites (one click in the panel, then the
+  browser's own prompt). With that access:
+  - It reads the address and title of the TradingView tab in front of its window, to tell which
+    symbol it shows.
+  - It puts two small scripts of its own into that TradingView tab. They draw the panel's lines on
+    the chart (your order and your open trades, with their money), and tell the panel when you
+    drag one. The scripts read nothing else on the page, and send nothing anywhere but to the
+    panel. When the panel closes, the lines go.
+
+  You can remove the access in the browser's extension settings. The panel then has no symbol to
+  work with.
 
 The panel talks only to the link, through the browser's native messaging. It makes no network
 requests.

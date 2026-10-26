@@ -205,11 +205,60 @@ static const MqlTradeRequest &Last() { return g_fake.requests.back(); }
 
 // Every change that reaches the server must have come from a Confirm, pass the checks against what
 // the server has at that moment, keep both levels, and change something.
+// A pending order changing type goes out as a removal and a new order (CAiExecutor::Replace): the
+// new one must take over the removed one's side, lots, expiry, owner and comment, as the other type.
+static FakeOrd s_removed{};
+static bool s_hasRemoved = false;
+
+static void CheckReplacement(const MqlTradeRequest &r)
+  {
+   const FakeOrd &o = s_removed;
+   bool buy = FakeBuyType(o.type);
+   if(FakeBuyType(r.type) != buy || r.type == o.type)
+      s_bad.push_back(s_case + ": a replacement changed the side, or kept the type");
+   if(std::fabs(r.volume - o.volume) > 1e-9)
+      s_bad.push_back(s_case + ": a replacement changed the lots");
+   // The old expiry stays when a new order may carry it; otherwise the server must take what is sent.
+   int flag = (o.typeTime == ORDER_TIME_GTC) ? SYMBOL_EXPIRATION_GTC : (o.typeTime == ORDER_TIME_DAY) ? SYMBOL_EXPIRATION_DAY :
+              (o.typeTime == ORDER_TIME_SPECIFIED) ? SYMBOL_EXPIRATION_SPECIFIED : SYMBOL_EXPIRATION_SPECIFIED_DAY;
+   bool dated = (o.typeTime == ORDER_TIME_SPECIFIED || o.typeTime == ORDER_TIME_SPECIFIED_DAY);
+   bool keepable = (g_fake.sym.expiration == 0 || (g_fake.sym.expiration & flag) != 0) && (!dated || o.expiration > g_fake.time);
+   if(keepable && (r.type_time != o.typeTime || r.expiration != o.expiration))
+      s_bad.push_back(s_case + ": a replacement did not keep the expiry");
+   if(r.magic != o.magic || std::string(r.comment.s) != o.comment)
+      s_bad.push_back(s_case + ": a replacement did not keep the owner's magic and comment");
+   AiSpec s;
+   AiLoadSpec(_Symbol, AI_PIP_TRADER, s);
+   string why = AiCheckStops(s, (ENUM_ORDER_TYPE)r.type, r.price, r.sl, r.tp, g_fake.sym.bid, g_fake.sym.ask);
+   if(why != string(""))
+      s_bad.push_back(s_case + ": placed a replacement the checks refuse: " + why.s);
+   if((g_app.cfg.requireSL && r.sl <= 0.0) || (g_app.cfg.requireTP && r.tp <= 0.0))
+      s_bad.push_back(s_case + ": placed a replacement without a required SL or TP");
+  }
+
 static void CheckRequest(const MqlTradeRequest &r)
   {
    s_checked++;
    if(!s_confirming)
       s_bad.push_back(s_case + ": a request went out without a Confirm click or key");
+   if(r.action == TRADE_ACTION_REMOVE)
+     {
+      if(FakeOrd *o = OrdOf(r.order))
+        {
+         s_removed = *o;
+         s_hasRemoved = true;
+        }
+      else
+         s_bad.push_back(s_case + ": removed an order the server does not have");
+      return;
+     }
+   // A new order right after a removal that went through is that order's replacement.
+   if(r.action == TRADE_ACTION_PENDING && s_hasRemoved && !OrdOf(s_removed.ticket))
+     {
+      s_hasRemoved = false;
+      CheckReplacement(r);
+      return;
+     }
    if(r.action != TRADE_ACTION_SLTP && r.action != TRADE_ACTION_MODIFY)
       return;
    AiLive l;
@@ -405,6 +454,7 @@ static void ScenarioPendingEntry()
 static void ScenarioRefusals()
   {
    Setup("changes the checks refuse are never sent");
+   g_fake.sym.orderMode = SYMBOL_ORDER_MARKET | SYMBOL_ORDER_LIMIT | SYMBOL_ORDER_SL | SYMBOL_ORDER_TP;   // no stop orders
    AddPos(101, POSITION_TYPE_BUY, 0.10, 1.08000, 1.07750, 1.08900);
    AddOrd(201, ORDER_TYPE_BUY_LIMIT, 0.10, 1.08300, 1.08100, 1.08700);
    Refresh();
@@ -412,8 +462,8 @@ static void ScenarioRefusals()
    Advance(350);
    Click(kP + "MODOK#bg");
    Key(13);
-   EXPECT(Sent() == 0, "a Buy Limit dragged above the market is not sent");
-   EXPECT(Has(CardStatus(), "BUY LIMIT must stay below the market price"), "the card says why: " + CardStatus());
+   EXPECT(Sent() == 0, "a Buy Limit dragged above the market, on a symbol without stop orders, is not sent");
+   EXPECT(Has(CardStatus(), "takes no stop orders: keep the entry below the price"), "the card says why: " + CardStatus());
    Key(27);
    Drag(Obj(101, "S"), 1.08490);
    Advance(350);
@@ -433,6 +483,47 @@ static void ScenarioRefusals()
    EXPECT(Sent() == 0 && Has(CardStatus(), "too close"), "a SL inside the stops level is not sent: sent " + std::to_string(Sent()) + ", " + CardStatus());
    Key(27);
    g_fake.sym.stops = 0;
+  }
+
+// MT5 can't change an order's type: a Buy Limit dragged above the market is removed, then placed
+// again as a Buy Stop, with its lots, SL/TP (moved along), expiry, magic and comment.
+static void ScenarioRetype()
+  {
+   Setup("a pending order dragged across the market becomes the other type");
+   AddOrd(201, ORDER_TYPE_BUY_LIMIT, 0.10, 1.08300, 1.08100, 1.08700, ORDER_TIME_DAY);
+   g_fake.ords[0].magic = 77;
+   g_fake.ords[0].comment = "mine";
+   Refresh();
+   Drag(Obj(201, "E"), 1.08600);
+   Advance(350);
+   EXPECT(Has(CardStatus(), "Becomes a BUY STOP"), "the card says what will happen: " + CardStatus());
+   EXPECT(Sent() == 0, "the drag sent nothing");
+   Click(kP + "MODOK#bg");
+   EXPECT(Sent() == 2 && g_fake.requests[0].action == TRADE_ACTION_REMOVE && g_fake.requests[0].order == 201 &&
+          g_fake.requests[1].action == TRADE_ACTION_PENDING, "the old order is removed first, then the new one placed");
+   const FakeOrd *o = g_fake.ords.empty() ? nullptr : &g_fake.ords[0];
+   EXPECT(g_fake.ords.size() == 1 && o->ticket != 201 && o->type == ORDER_TYPE_BUY_STOP && Near(o->price, 1.08600) && Near(o->sl, 1.08400) &&
+          Near(o->tp, 1.09000) && Near(o->volume, 0.10), "a Buy Stop at the dragged price, SL and TP along, the same lots");
+   EXPECT(o && o->typeTime == ORDER_TIME_DAY && o->magic == 77 && o->comment == "mine", "it keeps the expiry, the owner's magic and the comment");
+   EXPECT(g_fake.refusals.empty(), "the server refused nothing");
+
+   Setup("a replacement the server refuses leaves no order, and says so");
+   AddOrd(202, ORDER_TYPE_SELL_STOP, 0.20, 1.08200, 1.08400, 1.07800);
+   Refresh();
+   Drag(Obj(202, "E"), 1.08700);
+   Advance(350);
+   EXPECT(Has(CardStatus(), "Becomes a SELL LIMIT"), "a Sell Stop dragged above the market becomes a Sell Limit: " + CardStatus());
+   auto keep = g_fake.onSend;
+   g_fake.onSend = [keep](const MqlTradeRequest &r) {
+      if(keep) keep(r);
+      g_fake.forceRetcode = (r.action == TRADE_ACTION_PENDING) ? TRADE_RETCODE_INVALID_PRICE : 0;
+   };
+   Click(kP + "MODOK#bg");
+   g_fake.onSend = keep;
+   g_fake.forceRetcode = 0;
+   EXPECT(g_fake.ords.empty(), "the old order was removed, the new one refused: no order");
+   EXPECT(Has(PanelStatus(), "No order now: SELL STOP removed, SELL LIMIT refused"),
+          "the panel says exactly that: " + PanelStatus());
   }
 
 static void ScenarioBreakEven()
@@ -1001,6 +1092,7 @@ int main(int argc, char **argv)
    ScenarioTwoLevelsOneRequest();
    ScenarioOtherTradeDropsFirst();
    ScenarioPendingEntry();
+   ScenarioRetype();
    ScenarioRefusals();
    ScenarioBreakEven();
    ScenarioSafetyCap();

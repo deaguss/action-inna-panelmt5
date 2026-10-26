@@ -712,6 +712,8 @@ private:
       o.Num("rr", m.rr);
       o.Num("slPips", m.slPips, 1);
       o.Num("tpPips", m.tpPips, 1);
+      o.Str("type", AiOrderTypeName(m.type));
+      o.Bool("retype", m.retype);
      }
 
    void              DoModPreview(const long id, const CAiJsonIn &in)
@@ -795,16 +797,40 @@ private:
          return;
         }
       AiSendResult r;
-      if(!m_exec.Modify(s, l, m.open, m.sl, m.tp, r))
+      string was = "#" + IntegerToString((long)l.ticket) + " " + AiOrderTypeName(l.type);
+      if(m.retype)
+        {
+         if(!m_exec.Replace(s, l, m.type, m.open, m.sl, m.tp, r))
+           {
+            m_tradeEvent = r.removed;
+            string why = (r.removed) ? "The " + was + " was removed, but the " + AiOrderTypeName(m.type) + " was refused: " + r.msg +
+                                       ". No order is pending now" : "Not changed: " + r.msg;
+            AiLog("Browser panel: " + why);
+            CAiJsonOut f;
+            f.Str("t", "reply");
+            f.Int("id", id);
+            f.Bool("ok", false);
+            f.Str("err", why);
+            f.Bool("removed", r.removed);
+            Queue(f.Text());
+            return;
+           }
+         AiLog("Browser panel: " + was + " " + l.symbol + " replaced by #" + IntegerToString((long)r.ticket) + " " + AiOrderTypeName(m.type) +
+               " at " + AiPriceStr(s, m.open) + " | SL " + AiPriceStr(s, m.sl) + " TP " + AiPriceStr(s, m.tp));
+        }
+      else if(!m_exec.Modify(s, l, m.open, m.sl, m.tp, r))
         {
          Fail(id, "Not changed: " + r.msg);
          return;
         }
-      AiLog("Browser panel: changed #" + IntegerToString((long)l.ticket) + " " + l.symbol + ": SL " + AiPriceStr(s, m.sl) + " TP " +
-            AiPriceStr(s, m.tp) + (l.isOrder ? " entry " + AiPriceStr(s, m.open) : ""));
+      else
+         AiLog("Browser panel: changed #" + IntegerToString((long)l.ticket) + " " + l.symbol + ": SL " + AiPriceStr(s, m.sl) + " TP " +
+               AiPriceStr(s, m.tp) + (l.isOrder ? " entry " + AiPriceStr(s, m.open) : ""));
       CAiJsonOut o;
       Begin(o, id);
-      o.Int("ticket", (long)l.ticket);
+      o.Int("ticket", (long)(m.retype ? r.ticket : l.ticket));
+      o.Str("type", AiOrderTypeName(m.type));
+      o.Bool("replaced", m.retype);
       Queue(o.Text());
       m_tradeEvent = true;
      }

@@ -8,6 +8,7 @@
 //   ?scene=nomt5   no MT5 runs until Start MT5 is pressed
 //   ?scene=noea    MT5 runs, but no chart serves the panel
 //   ?terms=2       a second MT5 is connected too (a EUR netting account)
+//   ?tvAccess=1    access to TradingView's tabs was allowed before (else the panel asks for it)
 // In the console, actioninnaMock pokes it:
 //   actioninnaMock.gone('1')    that MT5 stops serving the panel; .back('1') brings it back
 //   actioninnaMock.problem('1', 'Turn on Algo Trading (toolbar button) to send orders')
@@ -15,6 +16,16 @@
 //   actioninnaMock.dropReply = 'send'   the next send is carried out, but its reply never comes
 //   actioninnaMock.stopLink()   the link exits; the panel starts it again
 //   actioninnaMock.last         the last request the panel sent
+//   actioninnaMock.refuseReplacement = true   the next type change loses its old order and is refused
+// and plays the browser window's tab in front, which starts as a TradingView chart of OANDA:XAUUSD:
+//   actioninnaMock.tv('FX:EURUSD')       TradingView's chart switches to that ticker
+//   actioninnaMock.tvTitle('GBPUSD 1.29') only its title changes (TradingView's address can lag)
+//   actioninnaMock.otherTab()            another site's tab comes to the front; .backToTv() returns
+//   actioninnaMock.allowTv = false       the trader says no when the panel asks for access
+// and TradingView's chart, where the panel draws its lines (tv/page.js):
+//   actioninnaMock.chartLines            the lines the panel drew last
+//   actioninnaMock.drag('pv-sl', 2640)   the trader drags that line there
+//   actioninnaMock.reloadTv()            TradingView's page reloads, and loses the panel's scripts
 
 const LAG_MS = 25;
 const params = new URLSearchParams(location.search);
@@ -401,14 +412,23 @@ const HANDLERS = {
     const now = x.side > 0 ? q.bid : q.ask;
     const ref = x.kind === 'position' ? now : open;
     const refWord = x.kind === 'position' ? 'the price now (' + now.toFixed(s.digits) + ')' : 'the entry';
+    // A pending entry moved across the market makes the order the other type (AiBuildModPlan).
+    const market = x.side > 0 ? q.ask : q.bid;
+    const limit = x.side > 0 ? open < market : open > market;
+    r.type = x.kind === 'position' || x.locked ? x.type : (x.side > 0 ? 'BUY ' : 'SELL ') + (limit ? 'LIMIT' : 'STOP');
+    r.retype = r.type !== x.type;
     if (x.locked) r.err = 'A stop-limit order can only be changed in MT5';
     else if (!(sl > 0)) r.err = 'Set a stop loss';
     else if (!(tp > 0)) r.err = 'Set a take profit';
+    else if (x.kind === 'order' && open === market) r.err = 'The entry is at the market price: move it above or below';
+    else if (x.kind === 'position' && sl === x.open && (sl - now) * x.side >= 0)
+      r.err = 'Break-even needs the ' + (x.side > 0 ? 'bid' : 'ask') + ' past your entry: ' + (x.side > 0 ? 'bid ' : 'ask ') + now.toFixed(s.digits) + ', entry ' + x.open.toFixed(s.digits);
     else if ((sl - ref) * x.side >= 0) r.err = 'The stop loss must be ' + (x.side > 0 ? 'below ' : 'above ') + refWord;
     else if ((tp - ref) * x.side <= 0) r.err = 'The take profit must be ' + (x.side > 0 ? 'above ' : 'below ') + refWord;
     else if (-r.slPct > SETTINGS.maxRiskPct + 1e-9 && x.sl > 0 && -r.slMoney > -r.oldSlMoney + 0.01) r.err = 'Risk ' + (-r.slPct).toFixed(2) + '% is above your ' + SETTINGS.maxRiskPct + '% safety cap';
+    if (!r.err && r.retype) r.warn = 'Becomes a ' + r.type + ': the ' + x.type + ' is removed, a new order placed';
     r.valid = !r.err && r.changed;
-    return { preview: this.addPreview('mod', { ticket: x.ticket, open, sl, tp }), mod: r };
+    return { preview: this.addPreview('mod', { ticket: x.ticket, open, sl, tp, type: r.type }), mod: r };
   },
 
   modSend(m) {
@@ -417,11 +437,24 @@ const HANDLERS = {
     if (this.problem) return { ok: false, err: this.problem };
     const x = this.find(pv.ticket);
     if (!x) return { ok: false, err: '#' + pv.ticket + ' is already closed' };
+    if (x.kind === 'order' && pv.type !== x.type) {
+      // Removed first, then placed as the other type (CAiExecutor::Replace).
+      this.trades = this.trades.filter((y) => y !== x);
+      this.changed();
+      if (mock.refuseReplacement) {
+        mock.refuseReplacement = false;
+        const err = 'The #' + x.ticket + ' ' + x.type + ' was removed, but the ' + pv.type + ' was refused: Invalid price. No order is pending now';
+        return { ok: false, err, removed: true };
+      }
+      const ticket = this.nextTicket++;
+      this.trades.push(Object.assign({}, x, { ticket, type: pv.type, open: pv.open, sl: pv.sl, tp: pv.tp }));
+      return { ticket, type: pv.type, replaced: true };
+    }
     if (x.kind === 'order') x.open = pv.open;
     x.sl = pv.sl;
     x.tp = pv.tp;
     this.changed();
-    return { ticket: x.ticket };
+    return { ticket: x.ticket, type: x.type, replaced: false };
   },
 
   closePreview(m) {
@@ -466,6 +499,93 @@ const HANDLERS = {
     this.trades = this.trades.filter((y) => y !== x);
     this.changed();
     return {};
+  },
+};
+
+//--- the browser: one window, and the tab in front of it ---------------------------
+const TV_ORIGIN = 'https://*.tradingview.com/*';
+const tabEvents = { activated: [], updated: [], added: [], removed: [], closed: [], messages: [] };
+const scripted = new Map();   // tab id -> the panel's scripts put in its page (bridge, page)
+const tabEvent = (list) => ({ addListener: (fn) => list.push(fn) });
+let frontTab = tvTab('OANDA:XAUUSD');
+let lastTv = frontTab;
+let tvAccess = params.get('tvAccess') === '1';
+
+function tvTab(ticker, title) {
+  const name = ticker.replace(/^.*:/, '');
+  return {
+    id: 1,
+    windowId: 1,
+    active: true,
+    url: 'https://www.tradingview.com/chart/abc/?symbol=' + encodeURIComponent(ticker),
+    title: title || name + ' 1,234.56 ▲ +0.10% Unnamed',
+  };
+}
+
+// What Chrome lets the panel see of a tab: its address and title only on a site it may read.
+function seen(tab) {
+  const t = { id: tab.id, windowId: tab.windowId, active: tab.active };
+  if (tvAccess && /^https:\/\/([a-z0-9-]+\.)*tradingview\.com\//i.test(tab.url)) Object.assign(t, { url: tab.url, title: tab.title });
+  return t;
+}
+
+function tabChanged(change) {
+  const t = seen(frontTab);
+  if (!t.url) return;   // Chrome tells nothing of a change it doesn't let the panel see
+  const told = {};
+  if (change.url) told.url = t.url;
+  if (change.title) told.title = t.title;
+  tabEvents.updated.forEach((fn) => fn(frontTab.id, told, t));
+}
+
+function tabToFront(tab) {
+  frontTab = tab;
+  tabEvents.activated.forEach((fn) => fn({ tabId: tab.id, windowId: tab.windowId }));
+}
+
+function tabById(id) {
+  return [frontTab, lastTv].find((t) => t.id === id) || null;
+}
+
+export const browser = {
+  tabs: {
+    query: async () => [seen(frontTab)],
+    onActivated: tabEvent(tabEvents.activated),
+    onUpdated: tabEvent(tabEvents.updated),
+    onRemoved: tabEvent(tabEvents.closed),
+    // Chrome's answer when no script in the tab listens: the scripts aren't there yet.
+    sendMessage: async (tabId, msg) => {
+      const s = scripted.get(tabId);
+      if (!s || !s.bridge) throw new Error('Could not establish connection. Receiving end does not exist.');
+      if (msg && msg.t === 'ai-lines' && s.page) mock.chartLines = msg.lines;
+      return { ok: true };
+    },
+  },
+  scripting: {
+    executeScript: async ({ target, files, world }) => {
+      const tab = tabById(target.tabId);
+      if (!tab || !seen(tab).url) throw new Error('Cannot access contents of the page. Extension manifest must request permission to access the respective host.');
+      const s = scripted.get(target.tabId) || {};
+      if (files.includes('tv/bridge.js') && world !== 'MAIN') s.bridge = true;
+      if (files.includes('tv/page.js') && world === 'MAIN') s.page = true;
+      scripted.set(target.tabId, s);
+      return [{ result: undefined }];
+    },
+  },
+  runtime: { onMessage: tabEvent(tabEvents.messages) },
+  windows: { getCurrent: async () => ({ id: 1 }) },
+  permissions: {
+    contains: async () => tvAccess,
+    request: async () => {
+      if (!mock.allowTv) return false;
+      if (!tvAccess) {
+        tvAccess = true;
+        setTimeout(() => tabEvents.added.forEach((fn) => fn({ origins: [TV_ORIGIN] })), 0);
+      }
+      return true;
+    },
+    onAdded: tabEvent(tabEvents.added),
+    onRemoved: tabEvent(tabEvents.removed),
   },
 };
 
@@ -615,6 +735,31 @@ const mock = {
   slip: null,
   dropReply: '',
   last: null,
+  refuseReplacement: false,
+  allowTv: true,
+  tv(ticker, title) {
+    frontTab = tvTab(ticker, title);
+    lastTv = frontTab;
+    tabChanged({ url: true, title: true });
+  },
+  tvTitle(title) {
+    frontTab = Object.assign({}, frontTab, { title });
+    lastTv = frontTab;
+    tabChanged({ title: true });
+  },
+  otherTab(url = 'https://example.com/') {
+    tabToFront({ id: 2, windowId: 1, active: true, url, title: 'Another site' });
+  },
+  backToTv() {
+    tabToFront(lastTv);
+  },
+  chartLines: [],
+  drag(key, price) {
+    tabEvents.messages.forEach((fn) => fn({ t: 'ai-moved', key, price }, { id: 'mock', tab: { id: lastTv.id } }));
+  },
+  reloadTv() {
+    scripted.delete(lastTv.id);
+  },
   gone(id = '1') {
     if (terms.has(id)) stopServing(terms.get(id));
   },

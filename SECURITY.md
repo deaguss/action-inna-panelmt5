@@ -32,6 +32,10 @@ Everything runs on your PC. These are the paths an order could take, and what gu
 - **The EA:** it treats every request as untrusted, with the same checks as the chart panel. Every
   write needs a preview id. Each id works once, within a minute, and only on the account it was made
   on. A new order whose risk grew more than 5% since its preview is refused.
+- **The lines on TradingView's chart:** the panel's script there runs inside TradingView's page,
+  where other scripts on that page could fake a drag. A drag only changes what the panel shows: a
+  preview's level, or a change card's. Nothing reaches MT5 without the trader's Confirm in the
+  panel, after its numbers have been on screen. Prices far from the market are ignored.
 - **Nothing listens on a network port.**
 
 Out of scope: a program running as your own Windows user. It can do whatever you can, MT5
