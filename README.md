@@ -192,6 +192,9 @@ Everything it shows comes from the ActionInna EA in MT5, and everything it sends
   part), Change SL/TP (a pending order's entry too) and Remove each open a card with the money at the
   new levels. Nothing changes until its Confirm.
 - **Several MT5s** (two brokers, say): a list picks the one the panel works with.
+- **Options**, as in the chart panel's menu: SL/TP from your last trade on the symbol, and risk in %
+  of equity or of balance. One-click trading stays on the chart: in the browser, Confirm is always a
+  second press.
 - **Confirm waits for MT5.** It stays off until MT5's numbers for what you typed are in, and while
   MT5 hasn't been heard from for 3 seconds. If MT5's answer to an order is lost on the way (the link
   or MT5 stopped), the panel doesn't say "not sent": it says the order may have gone through, and to
@@ -456,11 +459,14 @@ extension/             the browser side panel: plain JavaScript, no build step
   manifest.json    the side panel, the link (native messaging) and its own storage; TradingView tabs only when asked
   panel.html, panel.css, panel.js   the panel: what MT5 says, shown; what you type and press, sent
   lib/             numbers (format.js), the symbol of a TradingView tab (tv.js), the link connection (link.js)
+  icons/           drawn by scripts/make-icons.mjs
   dev/mock.js      a stand-in for the link and MT5, for working on the panel in a plain tab (not published)
 scripts/
   link-mt5.ps1     junctions into the MT5 data folder (-Unlink removes them)
   build.ps1        MetaEditor command-line build, logs in build\
   build-link.ps1   builds build\ActionInnaLink.exe with the C# compiler that comes with Windows
+  release.ps1      packs build\release: the side panel for the stores, the link and the EA for Windows
+  make-icons.mjs   draws the side panel's icons (node, no dependencies)
 tests/native/
   run.sh           the same sources compiled with g++ against a fake MT5, then every test run
   mql.h            the fake MT5: types, strings, checked arrays, chart objects, symbol, and a trade
@@ -478,6 +484,8 @@ tests/extension/
   serve.js         serves extension/ to a plain browser tab, where dev/mock.js stands in for the link
 docs/
   protocol.md      how the browser panel, the link and the EA talk
+  privacy.md       what the side panel, the link and the EA handle and keep (all on this PC)
+  publish.md       the Chrome Web Store and the GitHub download, step by step
 ```
 
 - **The link**: `scripts\build-link.ps1` builds it. Then, once, `build\ActionInnaLink.exe --install --dev`
@@ -491,6 +499,9 @@ docs/
   `node tests/extension/serve.js` and open <http://127.0.0.1:8137/panel.html>: `extension/dev/mock.js`
   plays the link and MT5, and the address picks a scene (`?terms=2`, `?scene=nomt5`, the rest are in
   that file). `node tests/extension/run.mjs` tests its libraries; CI runs it.
+
+- **A release**: `scripts\release.ps1` packs it after the two builds. Publishing is by hand:
+  [docs/publish.md](docs/publish.md).
 
 - **Native tests**, without MT5 (needs Git Bash, Node.js and g++ 9 or newer):
   `bash tests/native/run.sh [seeds] [rounds] [fuzz runs] [fuzz seed]`. It runs ActionInnaTests on seven

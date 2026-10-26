@@ -75,6 +75,11 @@
     <button type="button" id="confirm" class="confirm grow" disabled>Press SELL or BUY</button>
     <button type="button" id="cancelPreview" class="chip" hidden aria-label="Close the preview">X</button>
   </div>
+  <details id="opts" class="opts small">
+    <summary>Options</summary>
+    <label class="line"><input type="checkbox" id="optAuto"> Set SL/TP from my last trade on the symbol</label>
+    <div class="line">Risk in % of <button type="button" id="optBase" class="chip">equity</button></div>
+  </details>
 </section>
 
 <section class="block" id="tradesBlock" aria-label="Open trades">

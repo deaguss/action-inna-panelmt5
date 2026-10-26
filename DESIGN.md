@@ -43,6 +43,8 @@ except where this table says otherwise.
 | Status | An error or warning about the plan beats a passing message | What stops the order has to be seen at once |
 | Lost answers | "May have gone through: check Open trades", never "not sent" | A trader who believes nothing was sent may send it twice |
 | Keyboard | Tab through every control, Enter in the symbol field, Esc closes a card or the preview; no global hotkeys | The browser's and TradingView's shortcuts stay theirs |
+| Options | The chart menu's auto SL/TP and risk base, folded under Options; no one-click trading | Set once and left alone; in a browser, a stray click is closer at hand than on a chart |
+| Icon | A long-position box: TP above the entry line, SL below, at 2R, on the dark panel colour | Traders know the shape from TradingView's position tool, and it still reads at 16px |
 | Theme | Follows the browser (`prefers-color-scheme`), with the colours below | No chart background to follow |
 
 ## Colours and measured contrast

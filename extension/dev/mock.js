@@ -14,6 +14,7 @@
 //   actioninnaMock.slip = 3     the next market fill is 3 pips worse (-3: better; null: now and then)
 //   actioninnaMock.dropReply = 'send'   the next send is carried out, but its reply never comes
 //   actioninnaMock.stopLink()   the link exits; the panel starts it again
+//   actioninnaMock.last         the last request the panel sent
 
 const LAG_MS = 25;
 const params = new URLSearchParams(location.search);
@@ -539,6 +540,7 @@ function everySecond() {
 
 function handle(m) {
   if (!m || typeof m !== 'object') return;
+  mock.last = m;
   if (m.t === 'link.status') {
     linkSays('listening');
     for (const t of terms.values()) if (t.serving) linkSays('terminal-connected', t.id, t.acct.login + '@' + t.acct.server);
@@ -612,6 +614,7 @@ export function connect() {
 const mock = {
   slip: null,
   dropReply: '',
+  last: null,
   gone(id = '1') {
     if (terms.has(id)) stopServing(terms.get(id));
   },

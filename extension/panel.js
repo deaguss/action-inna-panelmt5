@@ -33,6 +33,8 @@ const prefs = {
   tpValue: '',
   followTv: false,
   autoRecall: true,
+  riskBase: '',      // 'equity' or 'balance' when the trader chose one
+  riskBaseInput: '', // the EA's input when they did
   symbols: {},   // account -> symbol last used
 };
 
@@ -300,6 +302,17 @@ if (inExtension && chrome.tabs) {
 }
 
 //--- the new order ----------------------------------------------------------------
+function eaRiskBase() {
+  const st = settings();
+  return (st && st.riskBase) || 'equity';
+}
+
+// What the risk % is measured on. As on the chart (App.mqh), the trader's choice holds until the
+// EA's input changes.
+function riskBase() {
+  return prefs.riskBase && prefs.riskBaseInput === eaRiskBase() ? prefs.riskBase : eaRiskBase();
+}
+
 function riskInput() {
   if (prefs.chip === 'custom') {
     const v = fmt.parseNumber(prefs.custom[prefs.customUnit]);
@@ -370,7 +383,7 @@ async function doPreview() {
     slValue: sl,
     tpMode: prefs.tpMode,
     tpValue: tp,
-    riskBase: (settings() && settings().riskBase) || 'equity',
+    riskBase: riskBase(),
   }, riskInput());
   S.previewAt = Date.now();
   const r = await link.request('preview', fields, S.term);
@@ -769,6 +782,8 @@ function render() {
   setValue($('tp'), prefs.tpValue);
   $('slMode').textContent = prefs.slMode;
   $('tpMode').textContent = prefs.tpMode === 'r' ? 'R' : prefs.tpMode;
+  $('optAuto').checked = prefs.autoRecall;
+  $('optBase').textContent = riskBase();
 
   const p = S.side ? S.plan : null;
   const has = p && p.lots > 0;
@@ -1030,6 +1045,18 @@ function wire() {
   $('slLast').addEventListener('click', () => recall('sl', false));
   $('tpLast').addEventListener('click', () => recall('tp', false));
   $('confirm').addEventListener('click', confirm);
+  $('optAuto').addEventListener('change', (e) => {
+    prefs.autoRecall = e.target.checked;
+    savePrefs();
+    setStatus(prefs.autoRecall ? 'SL/TP will be set from your last trade on the symbol' : 'SL/TP stay as you typed them last', 0, 4000);
+    render();
+  });
+  $('optBase').addEventListener('click', () => {
+    prefs.riskBase = riskBase() === 'equity' ? 'balance' : 'equity';
+    prefs.riskBaseInput = eaRiskBase();
+    setStatus('Risk in % of ' + prefs.riskBase, 0, 3000);
+    changed();
+  });
   $('cancelPreview').addEventListener('click', () => {
     closePreview('Preview closed. Nothing was sent', 0);
     render();

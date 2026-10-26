@@ -6,5 +6,6 @@
 # Shell scripts keep LF everywhere: Bash stops at a CR.
 *.sh text eol=lf
 
-# Compiled MQL5 programs
+# Compiled MQL5 programs, and the side panel's icons
 *.ex5 binary
+*.png binary

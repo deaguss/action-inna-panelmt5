@@ -79,6 +79,13 @@ All notable changes to ActionInna are recorded here. The format follows
     panel in a plain browser tab.
 - Tests: `tests/extension/run.mjs` covers the panel's numbers (written and read), TradingView symbols
   from tabs, and the link connection's requests and replies. CI runs it.
+- The side panel's options, as in the chart panel's menu: SL/TP from the last trade on the symbol,
+  and risk in % of equity or balance. The choice of base holds until the EA's input changes, as on
+  the chart. One-click trading isn't offered in the browser.
+- Icons for the side panel: a long-position box, drawn by `scripts/make-icons.mjs`.
+- Releases: `scripts/release.ps1` packs the side panel for the stores (without `dev/` and the
+  development key) and the link with the EA for Windows. `docs/publish.md` describes publishing, and
+  `docs/privacy.md` is the privacy policy. SECURITY.md describes how the browser panel is guarded.
 
 ### Fixed
 
