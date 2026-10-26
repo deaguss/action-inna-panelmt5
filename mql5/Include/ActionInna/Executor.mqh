@@ -259,6 +259,95 @@ public:
       return false;
      }
 
+   // Closes 'lots' of a position with an opposite deal tied to it (hedging and netting alike). A
+   // requote or a moved price is tried again at the new price, up to three times; an unsupported
+   // filling mode tries the next one.
+   bool              Close(const AiSpec &s, const AiLive &l, const double lots, const AiSettings &cfg, AiSendResult &r)
+     {
+      ZeroMemory(r);
+      if(m_fillSymbol != s.symbol)
+        {
+         m_fillSymbol = s.symbol;
+         m_fillMarket = -1;
+         m_fillPending = -1;
+        }
+      ENUM_ORDER_TYPE_FILLING fills[];
+      int nf = AiFillingOrder(s, false, fills);
+      if(m_fillMarket >= 0)
+         AiMoveFillToFront(fills, m_fillMarket);
+      for(int attempt = 0; attempt < 3; attempt++)
+        {
+         MqlTick tick;
+         ZeroMemory(tick);
+         if(!SymbolInfoTick(s.symbol, tick) || tick.bid <= 0.0 || tick.ask <= 0.0)
+           {
+            r.msg = "No prices for " + s.symbol;
+            return false;
+           }
+         bool again = false;
+         for(int i = 0; i < nf; i++)
+           {
+            MqlTradeRequest req;
+            MqlTradeResult res;
+            ZeroMemory(req);
+            ZeroMemory(res);
+            req.action = TRADE_ACTION_DEAL;
+            req.position = l.ticket;
+            req.symbol = s.symbol;
+            req.volume = lots;
+            req.type = (l.side == AI_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+            req.price = (l.side == AI_BUY) ? tick.bid : tick.ask;
+            req.deviation = (ulong)MathMax(cfg.deviation, 0);
+            req.magic = cfg.magic;
+            req.comment = cfg.comment;
+            req.type_filling = fills[i];
+            ResetLastError();
+            bool sent = OrderSend(req, res);
+            r.retcode = res.retcode;
+            if(res.retcode == TRADE_RETCODE_INVALID_FILL && i < nf - 1)
+               continue;
+            if(sent && (res.retcode == TRADE_RETCODE_DONE || res.retcode == TRADE_RETCODE_DONE_PARTIAL))
+              {
+               m_fillMarket = (int)fills[i];
+               r.ok = true;
+               r.ticket = l.ticket;
+               r.price = (res.price > 0.0) ? res.price : req.price;
+               r.volume = (res.volume > 0.0) ? res.volume : lots;
+               return true;
+              }
+            r.msg = AiResultText(res);
+            again = (res.retcode == TRADE_RETCODE_REQUOTE || res.retcode == TRADE_RETCODE_PRICE_CHANGED || res.retcode == TRADE_RETCODE_PRICE_OFF);
+            break;
+           }
+         if(!again)
+            return false;
+        }
+      return false;
+     }
+
+   // Removes a pending order.
+   bool              Remove(const ulong ticket, AiSendResult &r)
+     {
+      ZeroMemory(r);
+      MqlTradeRequest req;
+      MqlTradeResult res;
+      ZeroMemory(req);
+      ZeroMemory(res);
+      req.action = TRADE_ACTION_REMOVE;
+      req.order = ticket;
+      ResetLastError();
+      bool sent = OrderSend(req, res);
+      r.retcode = res.retcode;
+      if(sent && res.retcode == TRADE_RETCODE_DONE)
+        {
+         r.ok = true;
+         r.ticket = ticket;
+         return true;
+        }
+      r.msg = AiResultText(res);
+      return false;
+     }
+
    // Changes a position's SL/TP, or a pending order's price and SL/TP. A pending order keeps its
    // own expiry and stop-limit price.
    bool              Modify(const AiSpec &s, const AiLive &l, const double open, const double sl, const double tp, AiSendResult &r)

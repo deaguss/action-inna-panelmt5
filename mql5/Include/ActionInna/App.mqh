@@ -315,20 +315,7 @@ private:
       return (m_side == AI_BUY) ? t.ask : t.bid;
      }
 
-   // A remembered price level is reused only if it still sits on the right side of the entry.
-   bool              LevelFits(const double price, const bool isStop, const double entry) const
-     {
-      if(price <= 0.0 || entry <= 0.0)
-         return false;
-      double d = (price - entry) * m_side;
-      if(isStop)
-         d = -d;
-      double minDist = MathMax((double)m_spec.stopsLevel, 1.0) * m_spec.point;
-      return d >= minDist;
-     }
-
-   // Restores SL and/or TP from record idx, in the mode they were set last time. A price level
-   // that no longer fits falls back to the same distance.
+   // Restores SL and/or TP from record idx, in the mode they were set last time (AiRecallLevels).
    bool              ApplyRecall(const int idx, const bool doSL, const bool doTP, string &desc)
      {
       desc = "";
@@ -344,50 +331,9 @@ private:
         }
       else if(!HistoryMem(m))
          return false;
-      double entry = CurrentEntry();
-      // Distances are stored as price, so they convert to this symbol's pips whatever the broker.
-      double pip = (m_spec.pipSize > 0.0) ? m_spec.pipSize : 1.0;
-      if(doSL && m.slDist > 0.0)
-        {
-         if(m.slMode == AI_LEVEL_PRICE && LevelFits(m.slPrice, true, entry))
-           {
-            m_slMode = AI_LEVEL_PRICE;
-            m_slValue = m.slPrice;
-            desc += "SL " + AiPriceStr(m_spec, m_slValue);
-           }
-         else
-           {
-            m_slMode = AI_LEVEL_PIPS;
-            m_slValue = NormalizeDouble(m.slDist / pip, 1);
-            desc += "SL " + AiTrimZeros(DoubleToString(m_slValue, 1)) + " pips";
-           }
-        }
-      if(doTP && (m.tpDist > 0.0 || m.tpR > 0.0))
-        {
-         string part = "";
-         if(m.tpMode == AI_LEVEL_PRICE && LevelFits(m.tpPrice, false, entry))
-           {
-            m_tpMode = AI_LEVEL_PRICE;
-            m_tpValue = m.tpPrice;
-            part = "TP " + AiPriceStr(m_spec, m_tpValue);
-           }
-         else if(m.tpMode == AI_LEVEL_RR && m.tpR > 0.0)
-           {
-            m_tpMode = AI_LEVEL_RR;
-            m_tpValue = NormalizeDouble(m.tpR, 2);
-            part = "TP " + AiTrimZeros(DoubleToString(m_tpValue, 2)) + "R";
-           }
-         else if(m.tpDist > 0.0)
-           {
-            m_tpMode = AI_LEVEL_PIPS;
-            m_tpValue = NormalizeDouble(m.tpDist / pip, 1);
-            part = "TP " + AiTrimZeros(DoubleToString(m_tpValue, 1)) + " pips";
-           }
-         if(part != "")
-            desc += (desc == "") ? part : ", " + part;
-        }
+      bool any = AiRecallLevels(m_spec, m, m_side, CurrentEntry(), doSL, doTP, m_slMode, m_slValue, m_tpMode, m_tpValue, desc);
       m_refreshEdits = true;
-      return (desc != "");
+      return any;
      }
 
    // "Last" buttons and the recall key: each press steps one record further back. Records that
@@ -426,26 +372,8 @@ private:
 
    void              SaveMemory()
      {
-      if(m_plan.entry <= 0.0)
-         return;
       AiMem m;
-      ZeroMemory(m);
-      m.t = (long)TimeCurrent();
-      m.side = m_side;
-      m.slMode = m_slMode;
-      m.tpMode = m_tpMode;
-      if(m_plan.sl > 0.0)
-        {
-         m.slPrice = m_plan.sl;
-         m.slDist = MathAbs(m_plan.entry - m_plan.sl);
-        }
-      if(m_plan.tp > 0.0)
-        {
-         m.tpPrice = m_plan.tp;
-         m.tpDist = MathAbs(m_plan.tp - m_plan.entry);
-        }
-      m.tpR = (m_tpMode == AI_LEVEL_RR) ? m_tpValue : m_plan.rr;
-      if(m.slDist <= 0.0 && m.tpDist <= 0.0)
+      if(!AiMemFromPlan(m_plan, m_side, m_slMode, m_tpMode, m_tpValue, (long)TimeCurrent(), m))
          return;
       ReloadMemory();
       AiMemPush(m_mem, m);

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ActionInna</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<header class="block" id="head">
+  <div class="line">
+    <strong id="account">ActionInna</strong>
+    <span id="mode" class="badge" hidden></span>
+  </div>
+  <div class="line">
+    <span id="conn" class="muted">Starting the link…</span>
+    <button type="button" id="startMt5" hidden>Start MT5</button>
+  </div>
+  <label class="line" id="termRow" hidden>MT5 <select id="terms"></select></label>
+</header>
+
+<section class="block" id="symbolBlock" aria-label="Symbol">
+  <div class="line">
+    <input id="symbol" class="grow" type="text" spellcheck="false" autocomplete="off" placeholder="Symbol, e.g. XAUUSD" aria-label="Symbol">
+    <button type="button" id="symbolGo">Use</button>
+  </div>
+  <label class="line small"><input type="checkbox" id="followTv"> Follow TradingView's symbol</label>
+  <div id="cands" class="cands" hidden></div>
+  <div class="line quote" aria-live="off">
+    <span id="bid" class="sellText">-</span>
+    <span id="spread" class="muted small">-</span>
+    <span id="ask" class="buyText">-</span>
+  </div>
+</section>
+
+<section class="block" id="orderBlock" aria-label="New order">
+  <div class="sides">
+    <button type="button" id="sell" class="side sell"><span>SELL</span><span id="sellPx" class="px">-</span></button>
+    <button type="button" id="buy" class="side buy"><span>BUY</span><span id="buyPx" class="px">-</span></button>
+  </div>
+  <div class="line">
+    <button type="button" id="kind" class="chip">Market</button>
+    <label id="entryRow" class="grow line" hidden>Entry <input id="entry" class="grow" type="text" inputmode="decimal" aria-label="Entry price"></label>
+  </div>
+  <div class="line chips" role="group" aria-label="Risk">
+    <button type="button" class="chip" data-chip="0">1%</button>
+    <button type="button" class="chip" data-chip="1">1.5%</button>
+    <button type="button" class="chip" data-chip="2">2%</button>
+    <input id="custom" class="num" type="text" inputmode="decimal" aria-label="Custom risk">
+    <button type="button" id="customUnit" class="chip" aria-label="Custom risk unit">%</button>
+  </div>
+  <div class="line">
+    <span class="label">Stop loss</span>
+    <input id="sl" class="grow" type="text" inputmode="decimal" aria-label="Stop loss">
+    <button type="button" id="slMode" class="chip">pips</button>
+    <button type="button" id="slLast" class="chip muted">Last</button>
+  </div>
+  <div class="line">
+    <span class="label">Take profit</span>
+    <input id="tp" class="grow" type="text" inputmode="decimal" aria-label="Take profit">
+    <button type="button" id="tpMode" class="chip">R</button>
+    <button type="button" id="tpLast" class="chip muted">Last</button>
+  </div>
+  <dl id="nums" class="nums">
+    <dt>Lots</dt><dd id="nLots">-</dd>
+    <dt>Risk</dt><dd id="nRisk">-</dd>
+    <dt>Reward</dt><dd id="nReward">-</dd>
+    <dt>Risk : reward</dt><dd id="nRr">-</dd>
+    <dt>Distance (pips)</dt><dd id="nDist">-</dd>
+    <dt>Pip value</dt><dd id="nPip">-</dd>
+    <dt>Margin</dt><dd id="nMargin">-</dd>
+  </dl>
+  <div id="status" class="status" role="status"></div>
+  <div class="line">
+    <button type="button" id="confirm" class="confirm grow" disabled>Press SELL or BUY</button>
+    <button type="button" id="cancelPreview" class="chip" hidden aria-label="Close the preview">X</button>
+  </div>
+</section>
+
+<section class="block" id="tradesBlock" aria-label="Open trades">
+  <strong>Open trades</strong>
+  <div id="acct" class="muted small"></div>
+  <div id="card" class="card" hidden></div>
+  <ul id="trades" class="trades"></ul>
+  <div id="noTrades" class="muted small">No open trades.</div>
+</section>
+
+<script type="module" src="panel.js"></script>
+</body>
+</html>

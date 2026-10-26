@@ -10,8 +10,9 @@ anti-slop/
 # This PC's MT5 paths, written by scripts/link-mt5.ps1
 mt5.local.json
 
-# Claude Code settings for this PC only
+# Claude Code's own files: settings for this PC, and its preview entry for tests/extension/serve.js
 .claude/settings.local.json
+.claude/launch.json
 
 # Editor files generated on this PC (MQL clangd extension, VS Code); they hold local paths
 .vscode/
@@ -20,5 +21,6 @@ mt5.local.json
 compile_commands.json
 .mql-auto-forwards/
 
-# Native test build (tests/native/run.sh)
+# Native test build (tests/native/run.sh) and the link tests' files (tests/link/run.js)
 tests/native/out/
+tests/link/out/

@@ -272,6 +272,44 @@ void TestMemory()
    Check(ArraySize(arr) == AI_MEM_MAX, "history keeps at most AI_MEM_MAX records");
    Check(ArraySize(arr) > 0 && Near(arr[0].slDist, 0.0021, 1e-10), "newest record comes first");
 
+   // Recall gives back SL/TP in the modes they were set in; a price level that no longer fits the
+   // entry comes back as its distance (shared by the chart panel and the browser panel).
+   AiSpec fx;
+   ZeroMemory(fx);
+   fx.digits = 5;
+   fx.point = 0.00001;
+   fx.tickSize = 0.00001;
+   fx.pipSize = 0.0001;
+   AiMem r;
+   ZeroMemory(r);
+   r.slMode = AI_LEVEL_PRICE;
+   r.slPrice = 1.08250;
+   r.slDist = 0.0025;
+   r.tpMode = AI_LEVEL_RR;
+   r.tpR = 2.0;
+   r.tpDist = 0.0050;
+   int slMode = AI_LEVEL_PIPS;
+   double slValue = 0.0;
+   int tpMode = AI_LEVEL_PIPS;
+   double tpValue = 0.0;
+   string desc = "";
+   Check(AiRecallLevels(fx, r, AI_BUY, 1.08500, true, true, slMode, slValue, tpMode, tpValue, desc) && slMode == AI_LEVEL_PRICE &&
+         Near(slValue, 1.08250, 1e-9) && tpMode == AI_LEVEL_RR && Near(tpValue, 2.0, 1e-9), "recall: a stop price that still fits stays a price");
+   Check(AiRecallLevels(fx, r, AI_BUY, 1.08200, true, false, slMode, slValue, tpMode, tpValue, desc) && slMode == AI_LEVEL_PIPS &&
+         Near(slValue, 25.0, 1e-9) && desc == "SL 25 pips", "recall: a stop price above a lower entry comes back as 25 pips");
+   AiPlan plan;
+   ZeroMemory(plan);
+   plan.entry = 1.08500;
+   plan.sl = 1.08250;
+   plan.tp = 1.09000;
+   plan.rr = 2.0;
+   AiMem saved;
+   Check(AiMemFromPlan(plan, AI_BUY, AI_LEVEL_PIPS, AI_LEVEL_RR, 2.0, 0, saved) && Near(saved.slDist, 0.0025, 1e-10) && Near(saved.tpDist, 0.0050, 1e-10) &&
+         saved.tpMode == AI_LEVEL_RR && Near(saved.tpR, 2.0, 1e-9), "an order that went through leaves its SL/TP for recall");
+   plan.sl = 0.0;
+   plan.tp = 0.0;
+   Check(!AiMemFromPlan(plan, AI_BUY, AI_LEVEL_PIPS, AI_LEVEL_RR, 2.0, 0, saved), "an order without SL or TP leaves nothing");
+
    AiMem p;
    Check(AiMemFill(p, AI_BUY, 1.08500, 1.08250, 1.09000, 0) && Near(p.slDist, 0.0025, 1e-10) && Near(p.tpR, 2.0, 1e-6), "record from an order");
    Check(!AiMemFill(p, AI_BUY, 1.08500, 1.08600, 0.0, 0), "a stop on the profit side is not a stop distance");

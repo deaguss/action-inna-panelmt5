@@ -38,6 +38,10 @@ It is an Expert Advisor (MQL5), so it runs inside MT5 with MT5's own prices and 
   accounts without opposite positions or with first-in-first-out closes, market, instant, request and
   exchange execution, limited filling and expiry modes, symbols that take no stop orders or no SL/TP,
   symbol names with prefixes and suffixes, and USD, EUR, JPY and cent accounts.
+- The browser panel (section 4) has been tested without MT5 only: the EA's side natively (every
+  request at every broker set-up, the pipe and its key), the link against made-up EAs, and the side
+  panel in a browser tab against a stand-in for the link and MT5. In MT5 only its named pipe has run,
+  with a test EA: a round trip from the browser to MT5 and back took 31 ms (median), 62 ms at most.
 - Not yet tried: market orders through the panel, dragging a pending order's entry, the rest of the
   checklist in section 10, real brokers other than Exness, and MT5 on Mac or Linux. If you run it
   there, open an issue with what you saw.
@@ -172,6 +176,40 @@ What the panel shows:
 | Distance (pips) | SL and TP distance from the entry |
 | Pip value | Money per pip at this lot size |
 | Margin | Margin the order needs, and the free margin left after it |
+
+### In the browser (in development)
+
+A side panel for Chrome (also Edge and Brave), next to TradingView, with the same numbers and checks.
+Everything it shows comes from the ActionInna EA in MT5, and everything it sends goes through it:
+
+- **The order form** is the chart panel's: SELL/BUY, Market or Pending, risk 1 / 1.5 / 2 % or your
+  own (%, money or lots), SL in pips or price, TP in R, pips or price, Last, the numbers, Confirm.
+- **The symbol:** type it, or a TradingView ticker such as `OANDA:XAUUSD`. ActionInna finds the
+  broker's name for it (`XAUUSDm`, `#XAUUSD`, `GOLD`) and asks when more than one fits. **Follow
+  TradingView's symbol** asks for access to TradingView's tabs, and reads only their address and
+  title.
+- **Open trades:** every position and pending order on every symbol, with its profit. Close (all or
+  part), Change SL/TP (a pending order's entry too) and Remove each open a card with the money at the
+  new levels. Nothing changes until its Confirm.
+- **Several MT5s** (two brokers, say): a list picks the one the panel works with.
+- **Confirm waits for MT5.** It stays off until MT5's numbers for what you typed are in, and while
+  MT5 hasn't been heard from for 3 seconds. If MT5's answer to an order is lost on the way (the link
+  or MT5 stopped), the panel doesn't say "not sent": it says the order may have gone through, and to
+  check Open trades before sending again.
+- **One ActionInna chart in each MT5 serves the browser panel.** It doesn't matter which: if that
+  chart closes, another ActionInna chart takes over within seconds. The input **Serve the browser
+  side panel** switches this off.
+- **MT5 needs no setting for it.** The EA talks to a small program on this PC (the *link*) through a
+  named pipe. Only your Windows user can open the pipe, and the EA serves the link only after it
+  sends a key that only your Windows user can read.
+- **The same checks as on the chart.** Every order, change or close from the browser is previewed
+  first, and checked again with fresh prices when it is confirmed.
+- **MT5 starts by itself.** When the panel opens and no MT5 is connected, the link starts the MT5s
+  you installed it for, minimised.
+
+Neither the side panel nor the link is released yet: for now the panel is loaded unpacked, and the
+link built from this repository (section 11). How the pieces talk is in
+[docs/protocol.md](docs/protocol.md).
 
 ## 5. Hotkeys
 
@@ -329,6 +367,7 @@ What that means in practice:
 | | Font / size | Arial 9 (on every Windows PC, so the text keeps the sizes the layout was measured for) |
 | | Sounds | on |
 | | Log file | on: `MQL5\Files\ActionInna\log.txt` |
+| Browser panel | Serve the browser side panel | on (one chart per MT5 does it; section 4) |
 
 Panel choices (risk chip, custom values, toggles, position) are saved in
 `Terminal\Common\Files\ActionInna\settings.txt`. An input you change wins over the saved panel choice.
@@ -398,16 +437,30 @@ mql5/
     PreviewLines.mqh lines, zones and price tags on the chart
     OrderLines.mqh   lines of open trades, whose drags go to the modify card
     Trades.mqh       open positions and pending orders as the panel reads them
-    Executor.mqh     permissions, filling modes, OrderSend, SL/TP after slippage
+    Executor.mqh     permissions, filling modes, OrderSend, close, remove, SL/TP after slippage
     ChartGuard.mqh   chart settings changed while the EA runs, and their restore
+    Bridge.mqh       the browser panel's requests (docs/protocol.md), answered with the same checks
+    Link.mqh         which chart serves the browser panel, the named pipe, the link's key
+    Json.mqh         JSON for the browser panel's messages
+    SymbolMap.mqh    TradingView tickers to the broker's symbol names
     Hotkeys.mqh, Ui.mqh, Util.mqh, Defines.mqh
   Scripts/ActionInna/
     ActionInnaTests.mq5  worked examples and the test run
     Scenarios.mqh        generated scenario suites
     TestKit.mqh          counters, report, seeded random numbers
+link/                  the link between the browser panel and MT5 (ActionInnaLink.exe)
+  Program.cs       its modes, where it keeps its files, its key
+  Host.cs          the browser side (Chrome's native messaging), the pipe to the EAs, starting MT5
+  Installer.cs     --install and --uninstall: this Windows user only, no administrator rights
+extension/             the browser side panel: plain JavaScript, no build step
+  manifest.json    the side panel, the link (native messaging) and its own storage; TradingView tabs only when asked
+  panel.html, panel.css, panel.js   the panel: what MT5 says, shown; what you type and press, sent
+  lib/             numbers (format.js), the symbol of a TradingView tab (tv.js), the link connection (link.js)
+  dev/mock.js      a stand-in for the link and MT5, for working on the panel in a plain tab (not published)
 scripts/
   link-mt5.ps1     junctions into the MT5 data folder (-Unlink removes them)
   build.ps1        MetaEditor command-line build, logs in build\
+  build-link.ps1   builds build\ActionInnaLink.exe with the C# compiler that comes with Windows
 tests/native/
   run.sh           the same sources compiled with g++ against a fake MT5, then every test run
   mql.h            the fake MT5: types, strings, checked arrays, chart objects, symbol, and a trade
@@ -416,7 +469,28 @@ tests/native/
   brokers.h        the symbols and the nine broker set-ups every test runs against
   suites.cpp       ActionInnaTests over several seeds and made-up symbols, then at every broker set-up
   app.cpp          drag-and-confirm, slippage and broker scenarios, and a random fuzz against the real panel code
+  bridge.cpp       the browser panel's side: JSON (with a fuzz), every request at every broker set-up,
+                   which chart serves the panel, and the pipe and its key byte for byte
+tests/link/
+  run.js           plays Chrome and up to three EAs against the built link, and runs its installer
+tests/extension/
+  run.mjs          the side panel's libraries: numbers, TradingView symbols, requests and their replies
+  serve.js         serves extension/ to a plain browser tab, where dev/mock.js stands in for the link
+docs/
+  protocol.md      how the browser panel, the link and the EA talk
 ```
+
+- **The link**: `scripts\build-link.ps1` builds it. Then, once, `build\ActionInnaLink.exe --install --dev`
+  registers it for Chrome, Edge, Brave and Chromium (this Windows user) and points them at `build\`.
+  `node tests/link/run.js` tests it without touching that set-up: its files and its pipe go to
+  `tests/link/out`, and the registry is left alone. CI builds and tests it on Windows.
+
+- **The side panel**: in Chrome, open `chrome://extensions`, turn on Developer mode, and **Load
+  unpacked** the `extension` folder. It gets the development ID that `--dev` registered, so the link
+  answers it. Its toolbar button opens the panel. To work on the panel without MT5, run
+  `node tests/extension/serve.js` and open <http://127.0.0.1:8137/panel.html>: `extension/dev/mock.js`
+  plays the link and MT5, and the address picks a scene (`?terms=2`, `?scene=nomt5`, the rest are in
+  that file). `node tests/extension/run.mjs` tests its libraries; CI runs it.
 
 - **Native tests**, without MT5 (needs Git Bash, Node.js and g++ 9 or newer):
   `bash tests/native/run.sh [seeds] [rounds] [fuzz runs] [fuzz seed]`. It runs ActionInnaTests on seven

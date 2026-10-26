@@ -38,6 +38,9 @@ inline string operator+(const string &a, const string &b) { return string(a.s + 
 inline bool operator==(const string &a, const string &b) { return a.s == b.s; }
 inline bool operator!=(const string &a, const string &b) { return a.s != b.s; }
 inline bool operator<(const string &a, const string &b) { return a.s < b.s; }
+inline bool operator>(const string &a, const string &b) { return a.s > b.s; }
+inline bool operator<=(const string &a, const string &b) { return a.s <= b.s; }
+inline bool operator>=(const string &a, const string &b) { return a.s >= b.s; }
 
 //--- dynamic arrays: every index is checked, as MQL5 does ---------------
 [[noreturn]] inline void MqlCrash(const char *what)
@@ -155,8 +158,10 @@ const int MB_OKCANCEL = 1, MB_ICONQUESTION = 0x20, MB_ICONEXCLAMATION = 0x30;
 const int FW_NORMAL = 400, FW_BOLD = 700;
 const int TIME_DATE = 1, TIME_MINUTES = 2, TIME_SECONDS = 4;
 const int REASON_REMOVE = 1, REASON_CHARTCHANGE = 3, REASON_PARAMETERS = 5;
-const int FILE_READ = 1, FILE_WRITE = 2, FILE_TXT = 16, FILE_ANSI = 32, FILE_SHARE_READ = 128, FILE_SHARE_WRITE = 256,
+const int FILE_READ = 1, FILE_WRITE = 2, FILE_BIN = 4, FILE_TXT = 16, FILE_ANSI = 32, FILE_SHARE_READ = 128, FILE_SHARE_WRITE = 256,
           FILE_REWRITE = 512, FILE_COMMON = 4096;
+const int WHOLE_ARRAY = -1;
+const uint CP_UTF8 = 65001;
 
 enum ENUM_ORDER_TYPE { ORDER_TYPE_BUY, ORDER_TYPE_SELL, ORDER_TYPE_BUY_LIMIT, ORDER_TYPE_SELL_LIMIT, ORDER_TYPE_BUY_STOP,
                        ORDER_TYPE_SELL_STOP, ORDER_TYPE_BUY_STOP_LIMIT, ORDER_TYPE_SELL_STOP_LIMIT, ORDER_TYPE_CLOSE_BY };
@@ -173,8 +178,8 @@ const uint TRADE_RETCODE_REQUOTE = 10004, TRADE_RETCODE_PLACED = 10008, TRADE_RE
            TRADE_RETCODE_FIFO_CLOSE = 10045, TRADE_RETCODE_HEDGE_PROHIBITED = 10046;
 
 enum { SYMBOL_DIGITS = 1, SYMBOL_TRADE_STOPS_LEVEL, SYMBOL_TRADE_FREEZE_LEVEL, SYMBOL_TRADE_MODE, SYMBOL_TRADE_EXEMODE, SYMBOL_FILLING_MODE,
-       SYMBOL_ORDER_MODE, SYMBOL_EXPIRATION_MODE };
-enum ENUM_SYMBOL_INFO_STRING { SYMBOL_CURRENCY_BASE = 91, SYMBOL_CURRENCY_PROFIT };
+       SYMBOL_ORDER_MODE, SYMBOL_EXPIRATION_MODE, SYMBOL_VISIBLE };
+enum ENUM_SYMBOL_INFO_STRING { SYMBOL_CURRENCY_BASE = 91, SYMBOL_CURRENCY_PROFIT, SYMBOL_DESCRIPTION };
 enum ENUM_SYMBOL_INFO_DOUBLE { SYMBOL_POINT = 101, SYMBOL_TRADE_TICK_SIZE, SYMBOL_TRADE_CONTRACT_SIZE, SYMBOL_VOLUME_MIN, SYMBOL_VOLUME_MAX,
                                SYMBOL_VOLUME_STEP, SYMBOL_VOLUME_LIMIT, SYMBOL_TRADE_TICK_VALUE, SYMBOL_TRADE_TICK_VALUE_LOSS,
                                SYMBOL_TRADE_TICK_VALUE_PROFIT };
@@ -187,10 +192,11 @@ const int SYMBOL_ORDER_MARKET = 1, SYMBOL_ORDER_LIMIT = 2, SYMBOL_ORDER_STOP = 4
           SYMBOL_ORDER_TP = 32, SYMBOL_ORDER_CLOSEBY = 64;
 const int SYMBOL_EXPIRATION_GTC = 1, SYMBOL_EXPIRATION_DAY = 2, SYMBOL_EXPIRATION_SPECIFIED = 4, SYMBOL_EXPIRATION_SPECIFIED_DAY = 8;
 
-enum { ACCOUNT_BALANCE = 201, ACCOUNT_EQUITY, ACCOUNT_MARGIN_FREE };
+enum { ACCOUNT_BALANCE = 201, ACCOUNT_EQUITY, ACCOUNT_MARGIN_FREE, ACCOUNT_MARGIN };
 enum { ACCOUNT_MARGIN_MODE = 211, ACCOUNT_TRADE_ALLOWED, ACCOUNT_TRADE_EXPERT, ACCOUNT_HEDGE_ALLOWED, ACCOUNT_FIFO_CLOSE,
-       ACCOUNT_CURRENCY_DIGITS };
-enum { ACCOUNT_CURRENCY = 221, ACCOUNT_SERVER };
+       ACCOUNT_CURRENCY_DIGITS, ACCOUNT_LOGIN, ACCOUNT_TRADE_MODE };
+enum { ACCOUNT_CURRENCY = 221, ACCOUNT_SERVER, ACCOUNT_COMPANY };
+const int ACCOUNT_TRADE_MODE_DEMO = 0, ACCOUNT_TRADE_MODE_CONTEST = 1, ACCOUNT_TRADE_MODE_REAL = 2;
 const int ACCOUNT_MARGIN_MODE_RETAIL_NETTING = 0, ACCOUNT_MARGIN_MODE_EXCHANGE = 1, ACCOUNT_MARGIN_MODE_RETAIL_HEDGING = 2;
 enum ENUM_TERMINAL_INFO_INTEGER { TERMINAL_BUILD = 301, TERMINAL_CONNECTED, TERMINAL_TRADE_ALLOWED, TERMINAL_SCREEN_DPI,
                                   TERMINAL_KEYSTATE_SHIFT, TERMINAL_KEYSTATE_CONTROL };
@@ -201,7 +207,7 @@ enum { POSITION_TYPE = 401, POSITION_TIME_MSC, POSITION_IDENTIFIER };
 enum { POSITION_VOLUME = 411, POSITION_PRICE_OPEN, POSITION_SL, POSITION_TP, POSITION_PROFIT, POSITION_SWAP };
 enum { POSITION_SYMBOL = 421 };
 const int POSITION_TYPE_BUY = 0, POSITION_TYPE_SELL = 1;
-enum { ORDER_TYPE = 431, ORDER_TYPE_TIME, ORDER_TIME_EXPIRATION };
+enum { ORDER_TYPE = 431, ORDER_TYPE_TIME, ORDER_TIME_EXPIRATION, ORDER_TIME_SETUP_MSC };
 enum { ORDER_VOLUME_CURRENT = 441, ORDER_PRICE_OPEN, ORDER_SL, ORDER_TP, ORDER_PRICE_STOPLIMIT };
 enum { ORDER_SYMBOL = 451 };
 enum { DEAL_ENTRY = 461, DEAL_TYPE, DEAL_ORDER, DEAL_TIME };
@@ -284,7 +290,12 @@ struct FakeSym
    double bid = 1.08480, ask = 1.08500;
    std::string base = "EUR", profit = "USD";   // SYMBOL_CURRENCY_BASE and SYMBOL_CURRENCY_PROFIT
   };
-struct FakeFile { std::string data; size_t pos = 0; std::string key; };
+struct FakeFile { std::string data; size_t pos = 0; std::string key; bool pipe = false; };
+// Another symbol the broker lists (SymbolsTotal / SymbolName); only the fake's one symbol has prices.
+struct FakeOther { std::string name, description, base, profit; bool visible = false; };
+// The named pipe \\.\pipe\ActionInna.Link as the link program serves it: bytes waiting for the EA,
+// and bytes the EA wrote.
+struct FakePipe { bool serving = false, broken = false; std::string toEa, fromEa; };
 
 struct Fake
   {
@@ -307,6 +318,12 @@ struct Fake
    int requotesLeft = 0;
    double slip = 0.0;                       // market and exchange execution: a fill lands this much worse
    std::vector<uint> refusals;              // what the server refused by its own rules (not forceRetcode)
+   int64_t login = 12345678;
+   int accountMode = ACCOUNT_TRADE_MODE_DEMO;
+   double margin = 0.0;
+   std::vector<FakeOther> others;
+   std::map<std::string, double> globals;   // terminal global variables
+   FakePipe pipe;
    bool connected = true, termTrade = true, mqlTrade = true, accTrade = true, accExpert = true;
    std::vector<FakePos> pos;
    std::vector<FakeOrd> ords;
@@ -378,6 +395,7 @@ template<class... A> void Alert(const A &... a) { Print(a...); }
 
 //--- time, errors, environment -----------------------------------------------
 inline ulong GetMicrosecondCount() { return g_fake.us; }
+inline ulong GetTickCount64() { return g_fake.us / 1000; }
 inline datetime TimeCurrent() { return g_fake.time; }
 inline datetime TimeLocal() { return g_fake.time; }
 inline string TimeToString(datetime, int = TIME_DATE | TIME_MINUTES) { return string("2026.10.21 12:00:00"); }
@@ -408,6 +426,7 @@ inline double AccountInfoDouble(int prop)
    if(prop == ACCOUNT_BALANCE) return g_fake.balance;
    if(prop == ACCOUNT_EQUITY) return g_fake.equity;
    if(prop == ACCOUNT_MARGIN_FREE) return g_fake.marginFree;
+   if(prop == ACCOUNT_MARGIN) return g_fake.margin;
    return 0.0;
   }
 inline int64_t AccountInfoInteger(int prop)
@@ -419,17 +438,49 @@ inline int64_t AccountInfoInteger(int prop)
    // MT5: "for non-hedging accounts, the property value is always false"
    if(prop == ACCOUNT_FIFO_CLOSE) return (g_fake.fifo && g_fake.marginMode == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING) ? 1 : 0;
    if(prop == ACCOUNT_CURRENCY_DIGITS) return g_fake.currencyDigits;
+   if(prop == ACCOUNT_LOGIN) return g_fake.login;
+   if(prop == ACCOUNT_TRADE_MODE) return g_fake.accountMode;
    return 0;
   }
-inline string AccountInfoString(int prop) { return string(prop == ACCOUNT_CURRENCY ? g_fake.currency : std::string("FakeServer")); }
+inline string AccountInfoString(int prop)
+  {
+   if(prop == ACCOUNT_CURRENCY) return string(g_fake.currency);
+   if(prop == ACCOUNT_COMPANY) return string("Fake Broker Ltd");
+   return string("FakeServer");
+  }
+
+//--- terminal global variables -----------------------------------------------
+inline bool GlobalVariableCheck(const string &name) { return g_fake.globals.count(name.s) > 0; }
+inline bool GlobalVariableTemp(const string &name) { if(!g_fake.globals.count(name.s)) g_fake.globals[name.s] = 0.0; return true; }
+inline datetime GlobalVariableSet(const string &name, double v) { g_fake.globals[name.s] = v; return g_fake.time; }
+inline double GlobalVariableGet(const string &name) { auto it = g_fake.globals.find(name.s); return it == g_fake.globals.end() ? 0.0 : it->second; }
+inline bool GlobalVariableDel(const string &name) { return g_fake.globals.erase(name.s) > 0; }
+inline bool GlobalVariableSetOnCondition(const string &name, double v, double check)
+  {
+   auto it = g_fake.globals.find(name.s);
+   if(it == g_fake.globals.end() || it->second != check) return false;
+   it->second = v;
+   return true;
+  }
 
 //--- symbol ----------------------------------------------------------------
+inline const FakeOther *FakeOtherSym(const std::string &name)
+  {
+   for(auto &o : g_fake.others)
+      if(o.name == name) return &o;
+   return nullptr;
+  }
 inline int64_t SymbolInfoInteger(const string &symbol, int prop)
   {
    const FakeSym &s = g_fake.sym;
-   if(symbol.s != s.name) return 0;
+   if(symbol.s != s.name)
+     {
+      const FakeOther *o = FakeOtherSym(symbol.s);
+      return (o && prop == SYMBOL_VISIBLE) ? (o->visible ? 1 : 0) : 0;
+     }
    switch(prop)
      {
+      case SYMBOL_VISIBLE: return 1;
       case SYMBOL_DIGITS: return s.digits;
       case SYMBOL_TRADE_STOPS_LEVEL: return s.stops;
       case SYMBOL_TRADE_FREEZE_LEVEL: return s.freeze;
@@ -444,7 +495,8 @@ inline int64_t SymbolInfoInteger(const string &symbol, int prop)
 inline double SymbolInfoDouble(const string &symbol, int prop)
   {
    const FakeSym &s = g_fake.sym;
-   if(symbol.s != s.name) return 0.0;
+   if(symbol.s != s.name)
+      return (FakeOtherSym(symbol.s) && prop == SYMBOL_POINT) ? 0.00001 : 0.0;
    switch(prop)
      {
       case SYMBOL_POINT: return s.point;
@@ -463,10 +515,42 @@ inline double SymbolInfoDouble(const string &symbol, int prop)
 inline string SymbolInfoString(const string &symbol, int prop)
   {
    const FakeSym &s = g_fake.sym;
-   if(symbol.s != s.name) return string();
+   if(symbol.s != s.name)
+     {
+      const FakeOther *o = FakeOtherSym(symbol.s);
+      if(!o) return string();
+      if(prop == SYMBOL_CURRENCY_BASE) return string(o->base);
+      if(prop == SYMBOL_CURRENCY_PROFIT) return string(o->profit);
+      return string(prop == SYMBOL_DESCRIPTION ? o->description : std::string());
+     }
    if(prop == SYMBOL_CURRENCY_BASE) return string(s.base);
    if(prop == SYMBOL_CURRENCY_PROFIT) return string(s.profit);
+   if(prop == SYMBOL_DESCRIPTION) return string("The fake's own symbol");
    return string();
+  }
+// The fake's own symbol first, then the others; selected = Market Watch only.
+inline int SymbolsTotal(bool selected)
+  {
+   int n = 1;
+   for(auto &o : g_fake.others)
+      if(!selected || o.visible) n++;
+   return n;
+  }
+inline string SymbolName(int i, bool selected)
+  {
+   if(i == 0) return string(g_fake.sym.name);
+   int k = 0;
+   for(auto &o : g_fake.others)
+      if(!selected || o.visible)
+         if(++k == i) return string(o.name);
+   return string();
+  }
+inline bool SymbolSelect(const string &name, bool select)
+  {
+   if(name.s == g_fake.sym.name) return true;
+   for(auto &o : g_fake.others)
+      if(o.name == name.s) { o.visible = select; return true; }
+   return false;
   }
 inline bool SymbolInfoTick(const string &symbol, MqlTick &t)
   {
@@ -548,6 +632,7 @@ inline int64_t OrderGetInteger(int prop)
    if(prop == ORDER_TYPE) return o.type;
    if(prop == ORDER_TYPE_TIME) return o.typeTime;
    if(prop == ORDER_TIME_EXPIRATION) return o.expiration;
+   if(prop == ORDER_TIME_SETUP_MSC) return (int64_t)g_fake.time * 1000;
    return 0;
   }
 inline double OrderGetDouble(int prop)
@@ -789,7 +874,7 @@ inline uint FakePending(const MqlTradeRequest &req, MqlTradeResult &res)
 
 inline uint FakeApply(const MqlTradeRequest &req, MqlTradeResult &res)
   {
-   if(req.symbol.s != g_fake.sym.name) return TRADE_RETCODE_INVALID;
+   if(req.action != TRADE_ACTION_REMOVE && req.symbol.s != g_fake.sym.name) return TRADE_RETCODE_INVALID;   // a removal names only the order
    if(req.action == TRADE_ACTION_SLTP)
      {
       for(auto &p : g_fake.pos)
@@ -957,6 +1042,16 @@ inline bool FolderCreate(const string &, int = 0) { return true; }
 inline bool FileIsExist(const string &name, int flags = 0) { return g_fake.files.count(FakeKey(name, flags)) > 0; }
 inline int FileOpen(const string &name, int flags, ...)
   {
+   if(name.s == "\\\\.\\pipe\\ActionInna.Link")
+     {
+      if(!g_fake.pipe.serving) { g_fake.lastError = 5004; return INVALID_HANDLE; }
+      FakeFile f;
+      f.pipe = true;
+      g_fake.pipe.broken = false;
+      int h = g_fake.nextHandle++;
+      g_fake.handles[h] = f;
+      return h;
+     }
    std::string key = FakeKey(name, flags);
    bool exists = g_fake.files.count(key) > 0;
    if(!(flags & FILE_WRITE) && !exists) { g_fake.lastError = 5004; return INVALID_HANDLE; }
@@ -973,7 +1068,8 @@ inline void FileClose(int h)
   {
    auto it = g_fake.handles.find(h);
    if(it == g_fake.handles.end()) return;
-   g_fake.files[it->second.key] = it->second.data;
+   if(!it->second.pipe)
+      g_fake.files[it->second.key] = it->second.data;
    g_fake.handles.erase(it);
   }
 inline bool FileIsEnding(int h) { auto &f = g_fake.handles[h]; return f.pos >= f.data.size(); }
@@ -994,7 +1090,65 @@ inline uint FileWriteString(int h, const string &text, int = -1)
    f.pos += text.s.size();
    return (uint)text.s.size();
   }
-inline uint64_t FileSize(int h) { return g_fake.handles[h].data.size(); }
+// On the pipe: the bytes that have arrived and wait to be read, as MT5 reports them.
+inline uint64_t FileSize(int h) { auto &f = g_fake.handles[h]; return f.pipe ? g_fake.pipe.toEa.size() : f.data.size(); }
+
+//--- the named pipe, read and written in binary ---------------------------
+inline bool FakePipeHandle(int h) { auto it = g_fake.handles.find(h); return it != g_fake.handles.end() && it->second.pipe; }
+inline int FileReadInteger(int h, int size = 4)
+  {
+   std::string &q = g_fake.pipe.toEa;
+   if(!FakePipeHandle(h) || size != 4 || q.size() < 4) { g_fake.lastError = 5011; return 0; }
+   uint32_t v = (uint32_t)(uint8_t)q[0] | ((uint32_t)(uint8_t)q[1] << 8) | ((uint32_t)(uint8_t)q[2] << 16) | ((uint32_t)(uint8_t)q[3] << 24);
+   q.erase(0, 4);
+   return (int)v;
+  }
+inline uint FileReadArray(int h, MqlArray<uchar> &arr, int start = 0, int count = -1)
+  {
+   std::string &q = g_fake.pipe.toEa;
+   if(!FakePipeHandle(h)) return 0;
+   size_t n = (count < 0) ? q.size() : std::min((size_t)count, q.size());
+   arr.v.resize(start + n);
+   for(size_t i = 0; i < n; i++) arr.v[start + i] = (uchar)q[i];
+   q.erase(0, n);
+   return (uint)n;
+  }
+inline uint FileWriteInteger(int h, int value, int size = 4)
+  {
+   if(!FakePipeHandle(h) || g_fake.pipe.broken || !g_fake.pipe.serving || size != 4) { g_fake.lastError = 5011; return 0; }
+   uint32_t v = (uint32_t)value;
+   for(int i = 0; i < 4; i++) g_fake.pipe.fromEa += (char)((v >> (8 * i)) & 0xFF);
+   return 4;
+  }
+inline uint FileWriteArray(int h, const MqlArray<uchar> &arr, int start = 0, int count = -1)
+  {
+   if(!FakePipeHandle(h) || g_fake.pipe.broken || !g_fake.pipe.serving) { g_fake.lastError = 5011; return 0; }
+   int n = (count < 0) ? (int)arr.v.size() - start : count;
+   for(int i = 0; i < n; i++) g_fake.pipe.fromEa += (char)arr[start + i];
+   return (uint)n;
+  }
+inline void FileFlush(int) {}
+inline int StringToCharArray(const string &s, MqlArray<uchar> &arr, int start = 0, int count = -1, uint codepage = 0)
+  {
+   (void)codepage;
+   size_t n = (count < 0) ? s.s.size() + 1 : std::min((size_t)count, s.s.size() + 1);
+   arr.v.resize(start + n);
+   for(size_t i = 0; i < n; i++) arr.v[start + i] = (i < s.s.size()) ? (uchar)s.s[i] : 0;
+   return (int)n;
+  }
+inline string CharArrayToString(const MqlArray<uchar> &arr, int start = 0, int count = -1, uint codepage = 0)
+  {
+   (void)codepage;
+   int n = (count < 0) ? (int)arr.v.size() - start : count;
+   std::string r;
+   for(int i = 0; i < n; i++)
+     {
+      uchar c = arr[start + i];
+      if(c == 0) break;
+      r += (char)c;
+     }
+   return string(r);
+  }
 inline bool FileSeek(int h, int64_t offset, int origin)
   {
    auto &f = g_fake.handles[h];

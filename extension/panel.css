@@ -1,0 +1,197 @@
+/* The chart panel's colours (DESIGN.md, mql5/Include/ActionInna/Ui.mqh), for both themes. */
+:root {
+  --bg: rgb(255, 255, 255);
+  --border: rgb(210, 214, 222);
+  --text: rgb(28, 31, 38);
+  --muted: rgb(100, 107, 120);
+  --input-bg: rgb(245, 247, 250);
+  --input-border: rgb(128, 134, 146);
+  --chip: rgb(245, 247, 250);
+  --selected: rgb(228, 231, 237);
+  --buy-fill: rgb(20, 98, 212);
+  --sell-fill: rgb(198, 40, 56);
+  --buy-dim: rgb(227, 236, 250);
+  --sell-dim: rgb(248, 229, 231);
+  --buy-text: rgb(16, 86, 190);
+  --sell-text: rgb(176, 30, 46);
+  --danger: rgb(196, 36, 48);
+  --warn: rgb(150, 90, 0);
+  --good: rgb(16, 122, 62);
+  --divider: rgb(230, 233, 238);
+  --on-fill: rgb(255, 255, 255);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: rgb(23, 25, 31);
+    --border: rgb(52, 56, 66);
+    --text: rgb(232, 234, 239);
+    --muted: rgb(142, 149, 163);
+    --input-bg: rgb(33, 36, 44);
+    --input-border: rgb(104, 110, 124);
+    --chip: rgb(33, 36, 44);
+    --selected: rgb(52, 57, 70);
+    --buy-fill: rgb(36, 104, 214);
+    --sell-fill: rgb(200, 48, 62);
+    --buy-dim: rgb(27, 40, 62);
+    --sell-dim: rgb(53, 32, 40);
+    --buy-text: rgb(115, 170, 255);
+    --sell-text: rgb(255, 125, 136);
+    --danger: rgb(255, 110, 110);
+    --warn: rgb(242, 177, 80);
+    --good: rgb(72, 200, 125);
+    --divider: rgb(44, 48, 57);
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.35 Arial, Helvetica, sans-serif;
+}
+
+.block {
+  padding: 10px;
+  border-bottom: 1px solid var(--divider);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+}
+
+.grow { flex: 1 1 auto; min-width: 0; }
+.right { text-align: right; }
+.small { font-size: 12px; }
+.muted { color: var(--muted); }
+.label { width: 76px; flex: none; color: var(--muted); }
+.buyText { color: var(--buy-text); }
+.sellText { color: var(--sell-text); }
+.dangerText { color: var(--danger); }
+.goodText { color: var(--good); }
+.warnText { color: var(--warn); }
+[hidden] { display: none !important; }
+
+button, input, select {
+  font: inherit;
+  color: var(--text);
+  border-radius: 0;
+  min-height: 26px;
+}
+
+button {
+  background: var(--chip);
+  border: 1px solid var(--input-border);
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+button:disabled { cursor: default; color: var(--muted); }
+
+input, select {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  padding: 0 6px;
+}
+
+input.num { width: 64px; }
+
+:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: var(--text);
+  font-weight: bold;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: bold;
+  border: 1px solid var(--input-border);
+  padding: 1px 5px;
+}
+
+.badge.real { color: var(--danger); border-color: var(--danger); }
+
+.quote { justify-content: space-between; font-weight: bold; font-size: 14px; }
+
+.cands { display: flex; flex-direction: column; gap: 4px; }
+.cands button { text-align: left; }
+
+.sides { display: flex; gap: 4px; }
+
+.side {
+  flex: 1 1 0;
+  height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.side .px { font-weight: normal; font-size: 12px; }
+.side.buy { background: var(--buy-dim); color: var(--buy-text); border-color: var(--buy-fill); }
+.side.sell { background: var(--sell-dim); color: var(--sell-text); border-color: var(--sell-fill); }
+.side.buy[aria-pressed="true"] { background: var(--buy-fill); color: var(--on-fill); }
+.side.sell[aria-pressed="true"] { background: var(--sell-fill); color: var(--on-fill); }
+
+.nums {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+}
+
+.nums dt { color: var(--muted); }
+.nums dd { margin: 0; text-align: right; }
+
+.status { min-height: 34px; font-size: 12px; }
+.status.l1 { color: var(--warn); }
+.status.l2 { color: var(--danger); }
+.status.l3 { color: var(--good); }
+
+.confirm { height: 36px; font-weight: bold; }
+.confirm.buy:not(:disabled) { background: var(--buy-fill); color: var(--on-fill); border-color: var(--buy-fill); }
+.confirm.sell:not(:disabled) { background: var(--sell-fill); color: var(--on-fill); border-color: var(--sell-fill); }
+
+.trades { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.trade {
+  border: 1px solid var(--border);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trade .what { display: flex; justify-content: space-between; gap: 6px; }
+.trade .levels { font-size: 12px; color: var(--muted); }
+.trade .acts { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.card {
+  border: 1px solid var(--text);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.card .acts { display: flex; gap: 4px; }
+.card .acts .go { flex: 1 1 auto; font-weight: bold; }
+.card .acts .go.buy:not(:disabled) { background: var(--buy-fill); color: var(--on-fill); border-color: var(--buy-fill); }
+.card .acts .go.sell:not(:disabled) { background: var(--sell-fill); color: var(--on-fill); border-color: var(--sell-fill); }

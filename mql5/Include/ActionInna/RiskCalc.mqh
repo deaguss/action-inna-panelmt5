@@ -7,6 +7,7 @@
 #include "Defines.mqh"
 #include "Util.mqh"
 #include "SymbolSpec.mqh"
+#include "Trades.mqh"
 
 // Market orders keep their side. A pending buy below the ask is a limit and above it a stop;
 // a pending sell above the bid is a limit and below it a stop. ok is false at the market price.
@@ -527,6 +528,47 @@ string AiCheckModify(const AiSpec &s, const AiLive &l, const double open, const 
       return ((px - sl) * l.side <= 0.0) ? "Stop loss must stay " + (buy ? "below" : "above") + " the price" : "Stop loss is too close to the price" + minTxt;
    if(tp > 0.0 && (tp - px) * l.side < minDist - eps)
       return ((tp - px) * l.side <= 0.0) ? "Take profit must stay " + (buy ? "above" : "below") + " the price" : "Take profit is too close to the price" + minTxt;
+   return "";
+  }
+
+// "" when 'lots' of position l may be closed now, else why not; 'left' is what stays open. The
+// broker's freeze level is left to the server: a close is a market order, and refusing one near the
+// stop would keep a trader in a trade they want out of.
+string AiCheckClose(const AiSpec &s, const AiLive &l, const double lots, double &left)
+  {
+   left = 0.0;
+   if(l.isOrder)
+      return "A pending order is removed, not closed";
+   if(s.tradeMode == SYMBOL_TRADE_MODE_DISABLED)
+      return "Trading is disabled on this symbol";
+   double step = (s.volStep > 0.0) ? s.volStep : 0.01;
+   double k = lots / step;
+   if(lots <= 0.0 || MathAbs(k - MathRound(k)) > 1e-6)
+      return "Lots must be a multiple of " + AiLotsStr(s, step);
+   if(lots > l.lots + step * 1e-6)
+      return "The position has only " + AiLotsStr(s, l.lots) + " lots";
+   left = AiFloorToStep(MathMax(l.lots - lots, 0.0) + step * 1e-6, step);
+   if(left > 0.0 && left < s.volMin - step * 1e-6)
+      return "Close all of it, or leave at least the minimum " + AiLotsStr(s, s.volMin) + " lots";
+   ulong first = AiFifoBlocker(l);
+   if(first != 0)
+      return "This account closes positions first in, first out: close #" + IntegerToString((long)first) + " first";
+   return "";
+  }
+
+// "" when pending order l may be removed now, else why not.
+string AiCheckCancel(const AiSpec &s, const AiLive &l, const double bid, const double ask)
+  {
+   if(!l.isOrder)
+      return "A position is closed, not removed";
+   if(s.tradeMode == SYMBOL_TRADE_MODE_DISABLED)
+      return "Trading is disabled on this symbol";
+   if(s.freezeLevel > 0)
+     {
+      double fz = s.freezeLevel * s.point;
+      if(MathAbs(l.open - ((l.side == AI_BUY) ? ask : bid)) < fz - s.point * 0.5)
+         return "Too close to the market to remove (broker freeze level " + DoubleToString(AiSafeDiv(fz, s.pipSize), 1) + " pips)";
+     }
    return "";
   }
 

@@ -36,6 +36,49 @@ All notable changes to ActionInna are recorded here. The format follows
   execution mode, expiry types, order types, SL/TP allowed, volume and price grids, stops and freeze
   levels, netting, no opposite positions, FIFO closes, requotes and slippage.
 - CI runs the native tests on every push.
+- The EA's side of a browser panel for Chrome (in development; the panel and its link program are
+  not released yet). The protocol is in `docs/protocol.md`.
+  - One ActionInna chart per MT5 serves the panel; another takes over within seconds when that chart
+    closes. Input "Serve the browser side panel", on by default.
+  - The EA talks to the link through a named pipe, which needs no MT5 setting. It serves the link
+    only after the link sends the key from this Windows user's `Common\Files\ActionInna\link.key`.
+  - Requests: terminal, trades and quote updates; TradingView ticker to broker symbol, with the
+    trader's choice remembered per server; earlier SL/TP for a symbol, stepped through as with the
+    chart's Last buttons; previews and sends of new orders, changes, closes (also in part, and first
+    in, first out where the account requires it) and removals.
+  - Every write is a preview that can be confirmed once, within a minute, on the same account, and
+    is checked again with fresh prices when confirmed.
+- Tests: `tests/native/bridge.cpp` covers JSON (with a fuzz against a separate reader), every request
+  at every broker set-up, which chart serves the panel, and the pipe and its key byte for byte.
+- The link, `ActionInnaLink.exe` (`link/`, built by `scripts/build-link.ps1` with the C# compiler that
+  comes with Windows):
+  - It passes messages between the browser panel (Chrome's native messaging) and every connected
+    MT5, tagged with their terminal.
+  - It makes the key and sends it first.
+  - A newer connection for the same account replaces the older one.
+  - It refuses a second copy of itself.
+  - When no MT5 is connected, it starts the recorded terminals minimised, and tells the panel what
+    it sees.
+  - `--install` and `--uninstall` work for this Windows user, with no administrator rights. They
+    register the link for Chrome, Edge, Brave and Chromium, and copy `ActionInna.ex5` into MT5, never
+    into a folder linked to a repository. `--dev` points the browsers at the build.
+- Tests: `tests/link/run.js` plays Chrome and up to three EAs against the built link, and runs the
+  installer against made-up MT5 folders. CI builds and runs it on Windows.
+- The browser side panel (`extension/`; loaded unpacked for now, not on the Chrome Web Store yet):
+  - The chart panel's order form with MT5's numbers. Confirm stays off until MT5's numbers for the
+    latest input are in, and while MT5 hasn't been heard from for 3 seconds.
+  - The symbol from a typed name or TradingView ticker, or from the TradingView tab in front (its
+    address and title only, once the trader allows it).
+  - Every open position and pending order, with Close (all or part), Change SL/TP (and a pending
+    order's entry) and Remove, each on a card that shows the money before its Confirm.
+  - A typo in a price stops the preview with a message; it is never read as "no stop loss". An empty
+    lots field on a close card never means "close all".
+  - When the answer to an order or change is lost on the way (the link or MT5 stopped), the panel
+    says it may have been carried out, never "not sent".
+  - `extension/dev/mock.js` and `tests/extension/serve.js` play the link and MT5, for working on the
+    panel in a plain browser tab.
+- Tests: `tests/extension/run.mjs` covers the panel's numbers (written and read), TradingView symbols
+  from tabs, and the link connection's requests and replies. CI runs it.
 
 ### Fixed
 
@@ -61,6 +104,10 @@ All notable changes to ActionInna are recorded here. The format follows
   does.
 - Open positions and pending orders are read in `Trades.mqh`, shared by the chart lines and the
   slippage handling.
+- Recall and the SL/TP memory saved after an order are shared functions (`AiRecallLevels`,
+  `AiMemFromPlan`), used by the chart panel and the browser panel alike.
+- On the chart that serves the browser panel, the EA's timer runs every 25 ms; the panel keeps its
+  own pace.
 
 ## [1.0.0] - 2026-10-21
 

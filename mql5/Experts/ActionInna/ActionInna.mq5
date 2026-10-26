@@ -9,6 +9,7 @@
 #property description "a chart preview before anything is sent, and recall of the SL/TP you used before."
 
 #include <ActionInna\App.mqh>
+#include <ActionInna\Link.mqh>
 
 input group "Risk"
 input double              InpRisk1          = 1.0;            // Risk preset 1 (%)
@@ -61,7 +62,12 @@ input int                 InpFontSize       = 9;              // Font size
 input bool                InpSounds         = true;           // Play a sound when an order is sent or refused
 input bool                InpDebugLog       = true;           // Write a log to MQL5\Files\ActionInna\log.txt
 
-CAiApp g_app;
+input group "Browser panel"
+input bool                InpBrowserLink    = true;           // Serve the browser side panel (one chart in this MT5 does it)
+
+CAiApp  g_app;
+CAiLink g_link;
+ulong   g_appTimerMs = 0;
 
 int OnInit()
   {
@@ -106,11 +112,15 @@ int OnInit()
    g_app.cfg.fontSize = InpFontSize;
    g_app.cfg.sounds = InpSounds;
    g_app.cfg.debugLog = InpDebugLog;
-   return g_app.Init();
+   int result = g_app.Init();
+   if(result == INIT_SUCCEEDED)
+      g_link.Init(g_app.cfg, InpBrowserLink);
+   return result;
   }
 
 void OnDeinit(const int reason)
   {
+   g_link.Deinit();
    g_app.Deinit(reason);
   }
 
@@ -121,7 +131,19 @@ void OnTick()
 
 void OnTimer()
   {
-   g_app.Timer();
+   g_link.Timer();
+   // While this chart serves the browser panel the timer runs every 25 ms; the panel keeps its pace.
+   ulong now = GetMicrosecondCount() / 1000;
+   if(now - g_appTimerMs >= 150)
+     {
+      g_appTimerMs = now;
+      g_app.Timer();
+     }
+  }
+
+void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result)
+  {
+   g_link.OnTrade();
   }
 
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)

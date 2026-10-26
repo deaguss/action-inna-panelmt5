@@ -219,6 +219,8 @@ struct AiLive
   {
    ulong             ticket;
    ulong             id;           // a position's identifier: the ticket of the order that opened it
+   string            symbol;
+   long              openMsc;      // when a position opened, or an order was placed
    bool              isOrder;      // pending order: its entry can move, a position's cannot
    ENUM_ORDER_TYPE   type;         // ORDER_TYPE_BUY or ORDER_TYPE_SELL for a position
    int               side;

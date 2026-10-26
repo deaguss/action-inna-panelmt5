@@ -30,9 +30,14 @@ onto the chart again, before testing a change.
    the same scenarios). Every suite must say "all passed". The full report is written to
    `MQL5\Files\ActionInna\test-results.txt` (`runtime\test-results.txt` with the linked set-up).
    Before you share it, check it holds nothing about your account.
-4. `bash tests/native/run.sh` (Git Bash, Node.js, g++) must end with "native tests: all passed". It
+3. `bash tests/native/run.sh` (Git Bash, Node.js, g++) must end with "native tests: all passed". It
    runs the same tests and the drag-and-confirm scenarios without MT5 (README section 11).
-3. For anything the panel shows or sends, test it on a **demo account** and say in the pull request
+4. For a change to the link: `scripts\build-link.ps1`, then `node tests/link/run.js` must report 0
+   failed.
+5. For a change to the side panel: `node tests/extension/run.mjs` must report 0 failed. Try what you
+   changed in a browser tab with `node tests/extension/serve.js` (README section 11), at the side
+   panel's width (320 to 400 px), in both themes.
+6. For anything the panel shows or sends, test it on a **demo account** and say in the pull request
    what you clicked and what happened. The checklist in README section 10 covers the main flows.
 
 New logic in `RiskCalc.mqh`, `SymbolSpec.mqh`, `Memory.mqh`, `Hotkeys.mqh` or `Util.mqh` needs a worked

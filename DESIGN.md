@@ -28,6 +28,23 @@ moving chart: it should be calm, predictable and still.
 | Motion | None | A moving chart is next to it; the panel stays still |
 | Keyboard | Hotkeys for the main actions, Tab through every control | Trading without the mouse, and a visible focus ring |
 
+## The browser side panel
+
+The same panel in Chrome's side panel, next to TradingView (`extension/`). The decisions above hold,
+except where this table says otherwise.
+
+| Area | Decision | Reason |
+|---|---|---|
+| Layout | The chart panel's column, then the open trades with their cards | The order in which a trade is decided; the list stands in for the chart's trade lines |
+| Width | Works from 320px, Chrome's narrowest side panel | The panel shares the window with the chart |
+| Redraws | Built once and updated in place four times a second; trade rows kept per ticket; a card built once per opening | A redraw never takes a click, a cursor or an open list |
+| Confirm | Off until MT5's numbers for the latest input are in, then 0.3 s more | A click on numbers that just changed is not a decision on them |
+| Typed prices | A typo stops the preview with words; only an empty field means none | "No stop loss" must never come from a slip of the finger |
+| Status | An error or warning about the plan beats a passing message | What stops the order has to be seen at once |
+| Lost answers | "May have gone through: check Open trades", never "not sent" | A trader who believes nothing was sent may send it twice |
+| Keyboard | Tab through every control, Enter in the symbol field, Esc closes a card or the preview; no global hotkeys | The browser's and TradingView's shortcuts stay theirs |
+| Theme | Follows the browser (`prefers-color-scheme`), with the colours below | No chart background to follow |
+
 ## Colours and measured contrast
 
 Text needs 4.5:1 and control edges 3:1 (WCAG 2.x, computed, not estimated).
@@ -50,4 +67,5 @@ Text needs 4.5:1 and control edges 3:1 (WCAG 2.x, computed, not estimated).
 | Done / reward text | `72,200,125`, 8.2 | `16,122,62`, 5.4 |
 
 The theme follows the chart background (input "Theme"). The values live in `AiBuildTheme`
-(`mql5/Include/ActionInna/Ui.mqh`); change both together.
+(`mql5/Include/ActionInna/Ui.mqh`) and, for the side panel, in `extension/panel.css`; change them
+together.

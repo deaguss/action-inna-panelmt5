@@ -48,3 +48,27 @@ jobs:
 
       - name: Native tests (worked examples, generated suites, broker profiles, panel scenarios and fuzz)
         run: bash tests/native/run.sh
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Side panel tests (numbers, TradingView symbols, the link connection)
+        run: node tests/extension/run.mjs
+
+  link:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the link (C#, with the compiler that comes with .NET Framework 4.x)
+        shell: pwsh
+        run: ./scripts/build-link.ps1
+
+      - name: Link tests (Chrome and the EAs played against the built exe)
+        run: node tests/link/run.js

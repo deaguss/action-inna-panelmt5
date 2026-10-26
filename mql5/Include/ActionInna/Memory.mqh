@@ -6,6 +6,7 @@
 
 #include "Defines.mqh"
 #include "Util.mqh"
+#include "SymbolSpec.mqh"
 
 // Files live in Terminal\Common\Files\ActionInna, shared by every MT5 terminal on this PC:
 //   recall\<SYMBOL>.txt   newest first, one "key=value;..." line per remembered SL/TP
@@ -263,6 +264,94 @@ bool AiMemFromHistory(const string symbol, AiMem &m)
    return false;
   }
 
+// The record an order that went through leaves for recall: its SL and TP as distances and prices,
+// in the modes the trader used. False when the order had neither.
+bool AiMemFromPlan(const AiPlan &p, const int side, const int slMode, const int tpMode, const double tpValue, const long t, AiMem &m)
+  {
+   ZeroMemory(m);
+   if(p.entry <= 0.0)
+      return false;
+   m.t = t;
+   m.side = side;
+   m.slMode = slMode;
+   m.tpMode = tpMode;
+   if(p.sl > 0.0)
+     {
+      m.slPrice = p.sl;
+      m.slDist = MathAbs(p.entry - p.sl);
+     }
+   if(p.tp > 0.0)
+     {
+      m.tpPrice = p.tp;
+      m.tpDist = MathAbs(p.tp - p.entry);
+     }
+   m.tpR = (tpMode == AI_LEVEL_RR) ? tpValue : p.rr;
+   return (m.slDist > 0.0 || m.tpDist > 0.0);
+  }
+
+// A remembered price level is reused only if it still sits on the right side of the entry.
+bool AiLevelFits(const AiSpec &s, const int side, const double price, const bool isStop, const double entry)
+  {
+   if(price <= 0.0 || entry <= 0.0)
+      return false;
+   double d = (price - entry) * side;
+   if(isStop)
+      d = -d;
+   double minDist = MathMax((double)s.stopsLevel, 1.0) * s.point;
+   return d >= minDist;
+  }
+
+// SL and/or TP from a remembered record, in the mode they were set last time. A price level that no
+// longer fits falls back to the same distance. Distances are stored as price, so they convert to this
+// symbol's pips whatever the broker. Levels not asked for keep the values passed in. desc says what
+// was set ("SL 25 pips, TP 2R"); false when nothing was.
+bool AiRecallLevels(const AiSpec &s, const AiMem &m, const int side, const double entry, const bool doSL, const bool doTP,
+                    int &slMode, double &slValue, int &tpMode, double &tpValue, string &desc)
+  {
+   desc = "";
+   double pip = (s.pipSize > 0.0) ? s.pipSize : 1.0;
+   if(doSL && m.slDist > 0.0)
+     {
+      if(m.slMode == AI_LEVEL_PRICE && AiLevelFits(s, side, m.slPrice, true, entry))
+        {
+         slMode = AI_LEVEL_PRICE;
+         slValue = m.slPrice;
+         desc += "SL " + AiPriceStr(s, slValue);
+        }
+      else
+        {
+         slMode = AI_LEVEL_PIPS;
+         slValue = NormalizeDouble(m.slDist / pip, 1);
+         desc += "SL " + AiTrimZeros(DoubleToString(slValue, 1)) + " pips";
+        }
+     }
+   if(doTP && (m.tpDist > 0.0 || m.tpR > 0.0))
+     {
+      string part = "";
+      if(m.tpMode == AI_LEVEL_PRICE && AiLevelFits(s, side, m.tpPrice, false, entry))
+        {
+         tpMode = AI_LEVEL_PRICE;
+         tpValue = m.tpPrice;
+         part = "TP " + AiPriceStr(s, tpValue);
+        }
+      else if(m.tpMode == AI_LEVEL_RR && m.tpR > 0.0)
+        {
+         tpMode = AI_LEVEL_RR;
+         tpValue = NormalizeDouble(m.tpR, 2);
+         part = "TP " + AiTrimZeros(DoubleToString(tpValue, 2)) + "R";
+        }
+      else if(m.tpDist > 0.0)
+        {
+         tpMode = AI_LEVEL_PIPS;
+         tpValue = NormalizeDouble(m.tpDist / pip, 1);
+         part = "TP " + AiTrimZeros(DoubleToString(tpValue, 1)) + " pips";
+        }
+      if(part != "")
+         desc += (desc == "") ? part : ", " + part;
+     }
+   return (desc != "");
+  }
+
 // A tiny key=value store for settings.txt.
 class CAiKv
   {
@@ -320,6 +409,12 @@ public:
      {
       int i = Find(k);
       return (i < 0) ? def : (m_v[i] == "1");
+     }
+
+   string            GetS(const string k, const string def) const
+     {
+      int i = Find(k);
+      return (i < 0) ? def : m_v[i];
      }
 
    bool              Load(const string path)
