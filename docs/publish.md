@@ -24,10 +24,10 @@ done by hand, by the owner of the store and repository accounts.
 1. Register as a developer in the Chrome Web Store Developer Dashboard. There is a one-time fee.
 2. **New item:** upload `ActionInna-panel-<version>.zip`. The dashboard gives the item its ID
    (32 letters) straight away.
-3. **Before you submit,** add that ID to `ExtensionIds` in `link/Installer.cs`, next to the
-   development ID. Then run `scripts\build-link.ps1` and `scripts\release.ps1` again. The link
-   answers only the extension IDs it was installed with, so without this the store's panel can't
-   reach it.
+3. **Before you submit,** add that ID to `ExtensionIds` in `link/Installer.cs`. Then run
+   `scripts\build-link.ps1` and `scripts\release.ps1` again. The link answers only the extension IDs
+   it was installed with, so without this the store's panel can't reach it. The development ID is
+   allowed only by `--install --dev`, never by the download's installer.
 4. **Store listing:**
    - Summary: the manifest's description ("Risk-sized MetaTrader 5 orders in a side panel next to
      TradingView, sent through your own MT5.").
@@ -56,9 +56,9 @@ done by hand, by the owner of the store and repository accounts.
    - Privacy policy: the address of `docs/privacy.md` on GitHub, once it is on `main`.
 6. Submit for review.
 
-The development ID comes from the `"key"` in `extension/manifest.json`, which was made on this PC.
-To give the unpacked panel the store's ID instead, copy the item's public key from the dashboard's
-Package tab into `"key"`. The development ID can then leave `ExtensionIds`.
+The development ID comes from the `"key"` in `extension/manifest.json`. That key is public, so any
+unpacked extension can carry it and get the same ID: that is why only `--dev` installs allow it
+(`DevExtensionId` in `link/Installer.cs`).
 
 Edge Add-ons takes the same zip. It gives the item an ID of its own, which goes into
 `ExtensionIds` too.

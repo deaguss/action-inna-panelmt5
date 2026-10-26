@@ -3,7 +3,8 @@
 This covers the ActionInna side panel (the browser extension), the ActionInna link
 (`ActionInnaLink.exe`) and the ActionInna EA in MetaTrader 5. All three run on your PC, and none of
 them sends anything over the network: no analytics, no crash reports, no servers of ours. Nothing is
-sold or shared, because nothing leaves your PC.
+sold or shared: ActionInna sends nothing off your PC. The one thing another party can see is the
+lines drawn on TradingView's chart, which TradingView's page can read (below).
 
 ## What the side panel handles
 
@@ -18,11 +19,16 @@ sold or shared, because nothing leaves your PC.
   you allow access to `tradingview.com` and its country sites (one click in the panel, then the
   browser's own prompt). With that access:
   - It reads the address and title of the TradingView tab in front of its window, to tell which
-    symbol it shows.
+    symbol it shows, and closes itself when that tab is not TradingView. Of other sites' tabs the
+    browser shows it nothing.
   - It puts two small scripts of its own into that TradingView tab. They draw the panel's lines on
-    the chart (your order and your open trades, with their money), and tell the panel when you
-    drag one. The scripts read nothing else on the page, and send nothing anywhere but to the
-    panel. When the panel closes, the lines go.
+    the chart (your order and your open trades, with their prices, lots and money), and tell the
+    panel when you drag one. The scripts read nothing else on the page, and send nothing anywhere
+    but to the panel. When the panel closes, the lines go.
+  - **What TradingView can see:** the lines are drawn by TradingView's own chart code, inside its
+    page. TradingView's scripts, and any other script running on its page, can read them while they
+    are there: the prices, lots and money of your previewed order and of your open trades on that
+    symbol. ActionInna sends them nowhere, but can't stop the page from reading what is drawn on it.
 
   You can remove the access in the browser's extension settings. The panel then has no symbol to
   work with.
@@ -41,8 +47,8 @@ requests.
   EA's own files: earlier SL/TP per symbol and the panel's settings.
 - In the registry, under `HKEY_CURRENT_USER` only: one key per browser that points it at the link.
 
-The link talks to MT5 through a named pipe that only your Windows user can open. It opens no
-network port.
+The link talks to MT5 through a named pipe that only your Windows user can open, and only from this
+PC. It opens no network port.
 
 ## Removing it
 

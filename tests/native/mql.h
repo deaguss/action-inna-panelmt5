@@ -319,6 +319,7 @@ struct Fake
    double slip = 0.0;                       // market and exchange execution: a fill lands this much worse
    std::vector<uint> refusals;              // what the server refused by its own rules (not forceRetcode)
    int64_t login = 12345678;
+   std::string server = "FakeServer";
    int accountMode = ACCOUNT_TRADE_MODE_DEMO;
    double margin = 0.0;
    std::vector<FakeOther> others;
@@ -446,7 +447,8 @@ inline string AccountInfoString(int prop)
   {
    if(prop == ACCOUNT_CURRENCY) return string(g_fake.currency);
    if(prop == ACCOUNT_COMPANY) return string("Fake Broker Ltd");
-   return string("FakeServer");
+   if(prop == ACCOUNT_SERVER) return string(g_fake.server);
+   return string("");
   }
 
 //--- terminal global variables -----------------------------------------------

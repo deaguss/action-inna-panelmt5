@@ -12,7 +12,7 @@
   const drawn = new Map();   // key -> { line, spec }
   let queue = Promise.resolve();
   let heard = 0;
-  window.__actionInnaChart = { drawn };
+  window.__actionInnaChart = true;
 
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data || e.data.actionInna !== 'lines' || !Array.isArray(e.data.lines)) return;

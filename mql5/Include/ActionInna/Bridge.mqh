@@ -26,17 +26,22 @@
 #define AI_PV_MOD          1
 #define AI_PV_CLOSE        2
 
-// A preview the panel may confirm once, within AI_PREVIEW_TTL_MS, on the same account.
+// A preview the panel may confirm once, within AI_PREVIEW_TTL_MS, on the same account. What is sent
+// must be what it showed: the same order type (a new order, or a change that replaces a pending
+// order) and the same lots.
 struct AiPreview
   {
    string            id;
    int               kind;
    ulong             madeMs;
    long              login;
+   string            server;
    bool              used;
    string            symbol;
+   ENUM_ORDER_TYPE   type;
    AiInput           in;           // a new order
    double            seenRisk;
+   double            seenLots;
    ulong             ticket;       // a change or a close
    double            open;         // the change asked for
    double            sl;
@@ -228,6 +233,7 @@ private:
       m_pv[n].kind = kind;
       m_pv[n].madeMs = AiNowMs();
       m_pv[n].login = AccountInfoInteger(ACCOUNT_LOGIN);
+      m_pv[n].server = AccountInfoString(ACCOUNT_SERVER);
       m_pv[n].symbol = symbol;
       return n;
      }
@@ -252,7 +258,8 @@ private:
          Fail(id, "The preview is more than a minute old. Preview again");
          return -1;
         }
-      if(m_pv[k].login != AccountInfoInteger(ACCOUNT_LOGIN))
+      // Login numbers repeat across brokers: the server must match too.
+      if(m_pv[k].login != AccountInfoInteger(ACCOUNT_LOGIN) || m_pv[k].server != AccountInfoString(ACCOUNT_SERVER))
         {
          Fail(id, "MT5 is logged in to another account since the preview");
          return -1;
@@ -540,6 +547,8 @@ private:
       int k = AddPreview(AI_PV_NEW, symbol);
       m_pv[k].in = x;
       m_pv[k].seenRisk = p.riskMoney;
+      m_pv[k].seenLots = p.lots;
+      m_pv[k].type = p.type;
       CAiJsonOut o;
       Begin(o, id);
       o.Str("preview", m_pv[k].id);
@@ -575,6 +584,17 @@ private:
          if(!p.valid)
            {
             Fail(id, p.err);
+            return;
+           }
+         // A pending entry the price crossed would now be the other type (a limit becomes a stop).
+         if(p.type != pv.type)
+           {
+            Fail(id, "The price crossed the entry since the preview: it would be a " + AiOrderTypeName(p.type) + " now. Check it and confirm again");
+            return;
+           }
+         if(MathAbs(p.lots - pv.seenLots) > s.volStep * 0.5)
+           {
+            Fail(id, "The lots changed since the preview (" + AiLotsStr(s, pv.seenLots) + " to " + AiLotsStr(s, p.lots) + "). Check them and confirm again");
             return;
            }
          if(pv.seenRisk > 0.0 && p.riskMoney > pv.seenRisk * 1.05 + 0.01)
@@ -740,6 +760,7 @@ private:
       m_pv[k].open = m.open;
       m_pv[k].sl = m.sl;
       m_pv[k].tp = m.tp;
+      m_pv[k].type = m.type;
       m_pv[k].wasOpen = l.open;
       m_pv[k].wasSl = l.sl;
       m_pv[k].wasTp = l.tp;
@@ -794,6 +815,11 @@ private:
       if(!m.valid)
         {
          Fail(id, (m.err != "") ? m.err : "Nothing to change");
+         return;
+        }
+      if(m.type != pv.type)
+        {
+         Fail(id, "The price moved across the entry since the preview: the order would be a " + AiOrderTypeName(m.type) + " now. Check it and confirm again");
          return;
         }
       AiSendResult r;

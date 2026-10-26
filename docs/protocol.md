@@ -14,8 +14,11 @@ Every message is a JSON object, sent as a frame: a 4-byte little-endian length, 
 of UTF-8. Chrome's native messaging frames messages this way, and the pipe uses the same frames, so
 the link only has to pass them on.
 
-- A frame carries at most 1 MiB.
-- Unknown keys are ignored. A frame that isn't a JSON object gets an `error` message back.
+- A frame carries at most 1 MiB. A larger frame from the browser ends the link (the browser starts it
+  again); one from an EA ends that EA's connection.
+- Unknown keys are ignored. A frame from the panel that isn't a JSON object gets an `error` message
+  back. A frame from an EA that isn't valid UTF-8 holding one JSON object is dropped by the link: the
+  browser would close the whole connection over it.
 
 ## The link's key
 
@@ -35,7 +38,10 @@ log in to) another user could serve a pipe with the same name. The link guards a
    - It drops a connection that sends a wrong key, or none within 3 seconds.
    - With no `link.key` file, it serves nothing at all.
 
-The link never passes the key to the panel. The pipe itself also only lets this Windows user in.
+The link never passes the key to the panel. The pipe itself also only lets this Windows user in, and
+only from this PC (the NETWORK group is denied). A pipe keeps the security of whoever made it first,
+so the link checks that its pipe is owned by its own Windows user, and serves nothing when another
+user made it first.
 
 ## Who is who
 
@@ -115,8 +121,10 @@ the server has it now. It refuses:
 - an unknown preview id;
 - a preview id that was already used;
 - a preview older than 60 seconds;
-- a preview made on another account than the one MT5 is logged in to now;
-- a new order whose risk grew more than 5% since the preview;
+- a preview made on another account (login and server) than the one MT5 is logged in to now;
+- an order or change that would now be another order type than the preview showed: a pending entry
+  the price crossed since (a limit would become a stop, or back);
+- a new order whose lots would now differ from the preview's, or whose risk grew more than 5% since;
 - anything the checks refuse now.
 
 `cancel` (remove a pending order) is a single request: repeating it can't do harm. The panel still

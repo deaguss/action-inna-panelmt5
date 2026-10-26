@@ -24,18 +24,31 @@ tracker.
 Everything runs on your PC. These are the paths an order could take, and what guards each:
 
 - **The browser:** it starts the link only for the extension IDs in the link's manifest. Web pages
-  can't use native messaging, and neither can other extensions.
-- **The pipe** (`\\.\pipe\ActionInna.Link`): only your Windows user can open the link's pipe. A pipe
-  name is shared by every user of the PC, so another user could make a pipe of the same name first.
-  The EA therefore serves nothing until the first frame carries the key from `link.key`, which only
-  your Windows user can read.
+  can't use native messaging, and neither can other extensions. The download's installer allows the
+  store IDs only. The unpacked panel's development ID comes from a public key, so any unpacked
+  extension could carry it: only `--install --dev` allows it.
+- **The pipe** (`\\.\pipe\ActionInna.Link`): only your Windows user can open the link's pipe, and
+  only from this PC (the NETWORK group, which a connection over file sharing carries, is denied). A
+  pipe name is shared by every user of the PC, so another user could make a pipe of the same name
+  first, and a pipe keeps the security of whoever made it. So:
+  - the link serves only a pipe its own Windows user owns, and otherwise says it could not open it;
+  - the EA serves nothing until the first frame carries the key from `link.key`, which only your
+    Windows user can read.
+- **The link:** it passes the browser only frames the browser accepts (valid UTF-8 holding one JSON
+  object, at most 1 MiB), so one bad frame from an EA can't close the panel's connection.
 - **The EA:** it treats every request as untrusted, with the same checks as the chart panel. Every
-  write needs a preview id. Each id works once, within a minute, and only on the account it was made
-  on. A new order whose risk grew more than 5% since its preview is refused.
+  write except removing a pending order needs a preview id. Each id works once, within a minute, and
+  only on the account (login and server) it was made on. What is sent must be what the preview
+  showed: an order or change that would now be another order type (a pending entry the price crossed),
+  or a new order with other lots, or with a risk more than 5% higher, is refused.
 - **The lines on TradingView's chart:** the panel's script there runs inside TradingView's page,
   where other scripts on that page could fake a drag. A drag only changes what the panel shows: a
-  preview's level, or a change card's. Nothing reaches MT5 without the trader's Confirm in the
-  panel, after its numbers have been on screen. Prices far from the market are ignored.
+  preview's level, or a change card's. Only a line key and a price pass from the page to the panel,
+  and prices far from the market are ignored. Nothing reaches MT5 without the trader's Confirm in the
+  panel, and Confirm waits until MT5's preview of the latest change, typed or dragged, has been on
+  screen for 0.3 seconds: until then it would send the previous preview.
+- **Only beside TradingView:** the panel closes itself when another site's tab is in front of its
+  window, once it may read TradingView's tabs (it waits for an order on its way).
 - **Nothing listens on a network port.**
 
 Out of scope: a program running as your own Windows user. It can do whatever you can, MT5

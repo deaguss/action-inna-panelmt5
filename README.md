@@ -196,6 +196,10 @@ Everything it shows comes from the ActionInna EA in MT5, and everything it sends
   panel asks with one click for access to TradingView's tabs. A line under the symbol says where it
   comes from, or why it stays put: a ticker your broker doesn't have, or no TradingView chart in
   front.
+- **Only beside TradingView.** Once it has access to TradingView's tabs, the panel closes itself
+  1.5 seconds after another site's tab comes to the front of its window (a quick look at another tab
+  and back keeps it open). It waits while an order or change is on its way, and while an error about
+  one is on screen. Open it again from the toolbar on a TradingView tab.
 - **Lines on TradingView's chart.** The order you prepare shows on TradingView's chart as lines: its
   entry, its SL with the money at risk, its TP with the reward and the R:R. Every open position and
   pending order on the symbol shows too, dashed. Drag a line to change it:
@@ -217,16 +221,18 @@ Everything it shows comes from the ActionInna EA in MT5, and everything it sends
 - **Options**, as in the chart panel's menu: SL/TP from your last trade on the symbol, and risk in %
   of equity or of balance. One-click trading stays on the chart: in the browser, Confirm is always a
   second press.
-- **Confirm waits for MT5.** It stays off until MT5's numbers for what you typed are in, and while
-  MT5 hasn't been heard from for 3 seconds. If MT5's answer to an order is lost on the way (the link
+- **Confirm waits for MT5.** It stays off until MT5's numbers for what you typed or dragged are in
+  (and for 0.3 seconds after they show), and while MT5 hasn't been heard from for 3 seconds. MT5
+  refuses the order if, by the time it arrives, it would be another order type (the price crossed a
+  pending entry) or another lot size than the preview showed. If MT5's answer to an order is lost on the way (the link
   or MT5 stopped), the panel doesn't say "not sent": it says the order may have gone through, and to
   check Open trades before sending again.
 - **One ActionInna chart in each MT5 serves the browser panel.** It doesn't matter which: if that
   chart closes, another ActionInna chart takes over within seconds. The input **Serve the browser
   side panel** switches this off.
 - **MT5 needs no setting for it.** The EA talks to a small program on this PC (the *link*) through a
-  named pipe. Only your Windows user can open the pipe, and the EA serves the link only after it
-  sends a key that only your Windows user can read.
+  named pipe. Only your Windows user can open the pipe, and only on this PC; the EA serves the link
+  only after it sends a key that only your Windows user can read.
 - **The same checks as on the chart.** Every order, change or close from the browser is previewed
   first, and checked again with fresh prices when it is confirmed.
 - **MT5 starts by itself.** When the panel opens and no MT5 is connected, the link starts the MT5s

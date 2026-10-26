@@ -21,6 +21,7 @@
 //   actioninnaMock.tv('FX:EURUSD')       TradingView's chart switches to that ticker
 //   actioninnaMock.tvTitle('GBPUSD 1.29') only its title changes (TradingView's address can lag)
 //   actioninnaMock.otherTab()            another site's tab comes to the front; .backToTv() returns
+//   actioninnaMock.closed                how many times the panel closed itself (not on TradingView)
 //   actioninnaMock.allowTv = false       the trader says no when the panel asks for access
 // and TradingView's chart, where the panel draws its lines (tv/page.js):
 //   actioninnaMock.chartLines            the lines the panel drew last
@@ -574,6 +575,13 @@ export const browser = {
   },
   runtime: { onMessage: tabEvent(tabEvents.messages) },
   windows: { getCurrent: async () => ({ id: 1 }) },
+  // A page can't close the browser tab it runs in, so the panel closing itself is only counted.
+  sidePanel: {
+    close: async () => {
+      mock.closed++;
+      console.log('the side panel closed itself');
+    },
+  },
   permissions: {
     contains: async () => tvAccess,
     request: async () => {
@@ -737,6 +745,7 @@ const mock = {
   last: null,
   refuseReplacement: false,
   allowTv: true,
+  closed: 0,
   tv(ticker, title) {
     frontTab = tvTab(ticker, title);
     lastTv = frontTab;

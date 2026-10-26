@@ -4,13 +4,14 @@
 // and dev/mock.js stands in for it.
 import { Link, explainLinkError } from './lib/link.js';
 import * as fmt from './lib/format.js';
-import { tickerFromTab } from './lib/tv.js';
+import { tickerFromTab, isTradingView } from './lib/tv.js';
 import { wantedLines, parseLineKey } from './lib/lines.js';
 
 const HOST = 'com.actioninna.link';
 const TV_ORIGINS = ['https://*.tradingview.com/*'];   // www and the country sites (id., in., uk., ...)
 const ARM_MS = 300;        // Confirm waits this long after the order changed, against a click on moving numbers
 const ALIVE_MS = 3000;     // MT5 heard within this long (it writes at least once a second)
+const LEAVE_MS = 1500;     // the panel closes this long after TradingView left the front of its window
 const $ = (id) => document.getElementById(id);
 
 const inExtension = typeof chrome !== 'undefined' && !!(chrome.runtime && chrome.runtime.connectNative);
@@ -94,6 +95,8 @@ const S = {
   previewSeq: 0,
   previewAt: 0,
   planAt: 0,
+  inputs: 0,             // counts the trader's changes to the order (typed, chosen, or dragged on the chart)
+  planInputs: -1,        // the count the plan on screen was made for
   sending: false,
   recallSl: 0,
   recallTp: 0,
@@ -291,17 +294,23 @@ async function initFollow() {
   browser.permissions.onRemoved.addListener(() => {
     browser.permissions.contains({ origins: TV_ORIGINS }).then((has) => {
       S.tvAccess = has;
+      checkFront();
       render();
     }, () => {});
   });
   const ours = (windowId) => S.windowId === null || windowId === S.windowId;
   // A tab brought to the front is looked at again, whatever it showed before.
   browser.tabs.onActivated.addListener((info) => {
-    if (ours(info.windowId)) followTab(null, true);
+    if (!ours(info.windowId)) return;
+    followTab(null, true);
+    checkFront();
   });
-  // TradingView rewrites its title with every price; only a new ticker counts.
+  // TradingView rewrites its title with every price; only a new ticker counts. A tab that goes to
+  // another site says only that it is loading: Chrome hides the address.
   browser.tabs.onUpdated.addListener((id, change, tab) => {
-    if ((change.title || change.url) && tab && tab.active && ours(tab.windowId)) followTab(tab, false);
+    if (!tab || !tab.active || !ours(tab.windowId)) return;
+    if (change.title || change.url) followTab(tab, false);
+    if (change.url || change.status) checkFront();
   });
   browser.tabs.onRemoved.addListener((tabId) => {
     if (tabId === S.chartTabId) S.chartTabId = null;
@@ -316,6 +325,7 @@ function tvAccessGranted() {
   if (S.tvAccess) return;
   S.tvAccess = true;
   followTab(null, true);
+  checkFront();
   render();
 }
 
@@ -349,6 +359,52 @@ async function followTab(tab, force) {
   if (ticker === S.followed && !force) return !!S.symbol;
   S.followed = ticker;
   return !!(await resolveTicker(ticker));
+}
+
+//--- only beside TradingView ------------------------------------------------------
+// The panel closes itself when the tab in front of its window is not TradingView. Chrome shows it
+// the tabs' addresses only once the trader allowed access to TradingView, so until then it stays.
+// An order or a change on its way is waited for, and an error stays on screen for its time: "the
+// order may have gone through" has to be seen.
+const LEAVING = 'Not a TradingView tab: the panel closes';
+let offTvSince = 0;   // when TradingView left the front; 0 while it is there
+let offTvTimer = null;
+
+function mustStay() {
+  return S.sending || !!(S.card && S.card.busy) || (S.status.level >= 2 && Date.now() < S.status.until);
+}
+
+async function checkFront() {
+  clearTimeout(offTvTimer);
+  if (!browser || !browser.tabs || !S.tvAccess) {
+    offTvSince = 0;
+    return;
+  }
+  let tab;
+  try {
+    [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  } catch (e) {
+    return;
+  }
+  if (tab && isTradingView(tab.url)) {
+    offTvSince = 0;
+    if (S.status.text === LEAVING) S.status.until = 0;
+    return;
+  }
+  if (!offTvSince) {
+    offTvSince = Date.now();
+    if (!mustStay()) setStatus(LEAVING, 1, LEAVE_MS);
+    render();
+  }
+  const wait = offTvSince + LEAVE_MS - Date.now();
+  if (wait > 0 || mustStay()) {
+    clearTimeout(offTvTimer);
+    offTvTimer = setTimeout(checkFront, Math.max(wait, 250));
+    return;
+  }
+  // chrome.sidePanel.close came in Chrome 141; before it, the panel's page closes the panel.
+  if (browser.sidePanel && browser.sidePanel.close) browser.sidePanel.close({ windowId: S.windowId }).catch(() => window.close());
+  else window.close();
 }
 
 // What the line under the symbol says, and whether it is a warning.
@@ -458,6 +514,7 @@ function lineMoved(key, price) {
     if (sl > 0) c.sl = fmt.price(sl + price - was, S.spec.digits);
     if (tp > 0) c.tp = fmt.price(tp + price - was, S.spec.digits);
   } else c[k.role] = text;
+  c.edits++;
   c.at = Date.now();
   scheduleCardPreview(0);
   render();
@@ -536,6 +593,7 @@ async function doPreview() {
     render();
     return;
   }
+  const inputs = S.inputs;
   const fields = Object.assign({
     symbol: S.symbol,
     side: S.side > 0 ? 'buy' : 'sell',
@@ -555,7 +613,8 @@ async function doPreview() {
     S.previewId = '';
     S.planErr = r.err;
   } else {
-    if (materialChange(S.plan, r.plan)) {
+    // The numbers of a changed order count from when they are on screen, however long MT5 took.
+    if (inputs !== S.planInputs || materialChange(S.plan, r.plan)) {
       S.planAt = Date.now();
       renderWhenArmed();
     }
@@ -563,6 +622,7 @@ async function doPreview() {
     S.previewId = r.preview;
     S.planErr = '';
   }
+  S.planInputs = inputs;
   render();
 }
 
@@ -571,7 +631,10 @@ function renderWhenArmed() {
   setTimeout(render, ARM_MS + 20);
 }
 
+// Until MT5's preview of the change comes back, the plan on screen is the old order's, and Confirm
+// waits: it would send that old preview.
 function changed() {
+  S.inputs++;
   S.planAt = Date.now();
   savePrefs();
   schedulePreview();
@@ -663,8 +726,8 @@ async function recall(which, auto) {
 
 function canConfirm() {
   const i = info();
-  return !!(i && S.side && S.plan && S.plan.valid && S.previewId && !S.sending && link.connected && alive(S.term) &&
-            Date.now() - S.planAt >= ARM_MS && !i.problem);
+  return !!(i && S.side && S.plan && S.plan.valid && S.previewId && S.planInputs === S.inputs && !S.sending && link.connected &&
+            alive(S.term) && Date.now() - S.planAt >= ARM_MS && !i.problem);
 }
 
 function slipTolerance(planned) {
@@ -741,6 +804,8 @@ function openCard(kind, x) {
     busy: false,
     seq: 0,
     at: Date.now(),
+    edits: 0,            // as S.inputs: the card's confirm waits for MT5's look at the latest edit
+    previewEdits: -1,
   };
   if (kind !== 'cancel') scheduleCardPreview(0);
   render();
@@ -751,6 +816,7 @@ function openCard(kind, x) {
 function breakEven(x) {
   openCard('mod', x);
   S.card.sl = fmt.price(x.open, x.digits);
+  S.card.edits++;
   S.card.at = Date.now();
   scheduleCardPreview(0);
   render();
@@ -787,6 +853,7 @@ async function cardPreview() {
   const c = S.card;
   if (!c || c.kind === 'cancel') return;
   const seq = ++c.seq;
+  const edits = c.edits;
   const fields = cardFields(c);
   let r;
   if (typeof fields === 'string') r = { ok: false, err: fields };
@@ -794,10 +861,11 @@ async function cardPreview() {
   if (S.card !== c || seq !== c.seq) return;
   const result = r.ok ? r.close || r.mod : null;
   const err = r.ok ? '' : r.err;
-  if (err !== c.err || cardChanged(c.result, result)) {
+  if (err !== c.err || edits !== c.previewEdits || cardChanged(c.result, result)) {
     c.at = Date.now();
     renderWhenArmed();
   }
+  c.previewEdits = edits;
   c.preview = r.ok ? r.preview : '';
   c.result = result;
   c.err = err;
@@ -807,7 +875,7 @@ async function cardPreview() {
 function cardReady(c) {
   if (!c || c.busy || !alive(S.term) || Date.now() - c.at < ARM_MS) return false;
   if (c.kind === 'cancel') return true;
-  return !!(c.preview && c.result && c.result.valid);
+  return !!(c.preview && c.previewEdits === c.edits && c.result && c.result.valid);
 }
 
 async function cardConfirm() {
@@ -1103,6 +1171,7 @@ function buildCard(c) {
     input.value = c[key];
     input.addEventListener('input', () => {
       c[key] = input.value;
+      c.edits++;
       c.at = Date.now();
       scheduleCardPreview();
       render();
@@ -1265,3 +1334,4 @@ await initFollow();
 wire();
 render();
 link.start();
+checkFront();

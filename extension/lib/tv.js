@@ -7,16 +7,16 @@
 // later, so when the two differ the title wins. When they agree, the address adds the exchange.
 // "" when the tab is not on TradingView, or the symbol can't be told.
 export function tickerFromTab(url, title) {
-  let u;
-  try {
-    u = new URL(url);
-  } catch (e) {
-    return '';
-  }
-  if (!/(^|\.)tradingview\.com$/i.test(u.hostname)) return '';
+  const u = tradingViewUrl(url);
+  if (!u) return '';
   const sym = /^\/symbols\/([^/]+)/i.exec(u.pathname);
   if (sym) {
-    const s = decodeURIComponent(sym[1]);
+    let s;
+    try {
+      s = decodeURIComponent(sym[1]);
+    } catch (e) {
+      return '';   // "%ZZ": not a ticker
+    }
     const dash = s.indexOf('-');
     return clean(dash > 0 ? s.slice(0, dash) + ':' + s.slice(dash + 1) : s);
   }
@@ -25,6 +25,22 @@ export function tickerFromTab(url, title) {
   const fromTitle = titleTicker(title);
   if (fromAddress && fromTitle && bare(fromAddress) !== bare(fromTitle)) return fromTitle;
   return fromAddress || fromTitle;
+}
+
+// An address on one of TradingView's sites. Chrome shows the panel a tab's address only on the
+// sites it may read, so a tab whose address it can't see is not TradingView either.
+export function isTradingView(url) {
+  return tradingViewUrl(url) !== null;
+}
+
+function tradingViewUrl(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch (e) {
+    return null;
+  }
+  return u.protocol === 'https:' && /(^|\.)tradingview\.com$/i.test(u.hostname) ? u : null;
 }
 
 // "XAUUSD 2,650.12 ▲ +0.45% Unnamed" -> "XAUUSD"; a count of unread alerts in front, "(2) ", is skipped.

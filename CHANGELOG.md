@@ -123,8 +123,43 @@ All notable changes to ActionInna are recorded here. The format follows
   development key) and the link with the EA for Windows. `docs/publish.md` describes publishing, and
   `docs/privacy.md` is the privacy policy. SECURITY.md describes how the browser panel is guarded.
 
+- The side panel closes itself when another site's tab is in front of its window (once it may read
+  TradingView's tabs). A look at another tab of under 1.5 seconds keeps it open. It waits for an
+  order or change on its way, and keeps an error about one on screen for its time.
+- Security tests, about 1.2 million checks per run:
+  - side panel (`tests/extension/fuzz.mjs`, ~816,000): lookalike TradingView addresses, typed
+    levels, line keys, `tv/bridge.js` and `tv/page.js` run against a fake TradingView page, and
+    messages no link should send;
+  - EA (`tests/native/bridge.cpp`): a preview gate fuzz of 100,000 requests (forged, reused, expired,
+    evicted, other-kind and other-account previews, junk frames; ~304,000 checks) and 20,000 first
+    frames against the link's key;
+  - link (`tests/link/run.js`): the pipe's owner and access list, and a differential fuzz of frames
+    both ways (5,000 each way by default; `FUZZ_ROUNDS` and `FUZZ_SEED` change it).
+
+### Security
+
+- The link refuses a pipe that another Windows user made first. A pipe keeps the security of whoever
+  made it, so on a shared PC that user could have connected to the link and been sent its key, and
+  then served the EA themselves.
+- The link's pipe denies connections from other PCs (the NETWORK group), not only other users.
+- The download's installer no longer allows the development extension ID, whose key is public:
+  only `--install --dev` does.
+- The EA refuses a confirm whose order would now be another type (the price crossed a pending entry)
+  or another lot size than its preview showed; before, it sent the order as it stood at the confirm.
+  A preview is also tied to the account's server, not only its login.
+- The side panel's Confirm (and a change card's) waits for MT5's preview of the latest change, typed
+  or dragged on TradingView. Before, when MT5 took longer than 0.3 seconds to answer, Confirm could
+  send the previous preview while the fields already showed the new values.
+- `tv/bridge.js` passes on a drag only with a string key and a number price; `tv/page.js` no longer
+  leaves its lines on TradingView's `window`.
+- The link drops an EA frame the browser would refuse (not one JSON object, not UTF-8, over 1 MiB),
+  which would have closed the panel's connection, and ends on a browser frame over 1 MiB, as
+  documented, instead of 64 MiB.
+
 ### Fixed
 
+- A TradingView symbol page with a broken escape in its address (`/symbols/%ZZ/`) made the panel's
+  ticker reading throw, and the panel stopped following that tab.
 - Gold behind a broker prefix (`#XAUUSD`, `m.XAUUSD`) got a forex pip instead of 0.1 in the Trader
   convention. Gold is now also recognised by its base currency, XAU.
 - On an account that allows no opposite positions, an order against an open position reached the

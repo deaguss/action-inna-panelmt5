@@ -25,7 +25,7 @@ sealed class Term
 
 sealed class Host
 {
-    const int MaxFromTerm = 1024 * 1024;   // Chrome refuses larger messages from a host
+    const int MaxFrame = 1024 * 1024;   // Chrome refuses larger messages from a host, and the EA larger requests
 
     readonly object browserLock = new object();
     readonly object termsLock = new object();
@@ -89,8 +89,11 @@ sealed class Host
         while (ReadExactly(input, head, 4))
         {
             int length = BitConverter.ToInt32(head, 0);
-            if (length < 0 || length > 64 * 1024 * 1024)
+            if (length < 0 || length > MaxFrame)
+            {
+                Paths.Log("the browser sent a frame of " + length + " bytes");
                 return;
+            }
             byte[] body = new byte[length];
             if (!ReadExactly(input, body, length))
                 return;
@@ -201,14 +204,32 @@ sealed class Host
     }
 
     //--- the MT5 side -------------------------------------------------------------
-    // Only this Windows user may open the pipe. Overlapped, so a read waiting for an EA never holds
-    // up a write to it.
+    // Only this Windows user may open the pipe, and only on this PC: a pipe is reachable from other
+    // PCs over file sharing, where the same account signs in with the NETWORK group, which is denied.
+    // Overlapped, so a read waiting for an EA never holds up a write to it.
     NamedPipeServerStream NewPipe()
     {
         PipeSecurity security = new PipeSecurity();
+        security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
         security.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User, PipeAccessRights.FullControl, AccessControlType.Allow));
-        return new NamedPipeServerStream(Paths.PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
-                                         PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 65536, 65536, security);
+        NamedPipeServerStream pipe = new NamedPipeServerStream(Paths.PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+                                                               PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 65536, 65536, security);
+        // A pipe keeps the security of its first instance, whoever made it. If another Windows user
+        // made it first and let everyone in, they could connect to this instance and be sent the key.
+        SecurityIdentifier owner = null;
+        try
+        {
+            owner = pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+        }
+        catch (Exception)
+        {
+        }
+        if (owner == null || !owner.Equals(WindowsIdentity.GetCurrent().Owner))
+        {
+            pipe.Dispose();
+            throw new IOException("another Windows user made the pipe first");
+        }
+        return pipe;
     }
 
     void AcceptLoop()
@@ -257,7 +278,7 @@ sealed class Host
             while (ReadExactly(t.Pipe, head, 4))
             {
                 int length = BitConverter.ToInt32(head, 0);
-                if (length < 0 || length > MaxFromTerm)
+                if (length < 0 || length > MaxFrame)
                 {
                     Paths.Log("terminal " + t.Id + " sent a frame of " + length + " bytes");
                     break;
@@ -267,9 +288,17 @@ sealed class Host
                     break;
                 if (length == 0)
                     continue;
+                // Chrome ends the whole connection on a message that isn't JSON or is over 1 MiB, so
+                // one bad frame from an EA is dropped rather than passed on.
+                byte[] tagged = IsJsonObject(body) ? Tag(body, t.Id) : null;
+                if (tagged == null || tagged.Length > MaxFrame)
+                {
+                    Paths.Log("terminal " + t.Id + " sent a frame that is not a JSON object of at most 1 MiB; dropped");
+                    continue;
+                }
                 if (StartsWith(body, "{\"t\":\"terminal\""))
                     Introduce(t, body);
-                ToBrowser(Tag(body, t.Id));
+                ToBrowser(tagged);
             }
         }
         catch (Exception e)
@@ -365,12 +394,31 @@ sealed class Host
         return frame;
     }
 
-    // Adds "term" to a message from an EA, so the panel knows which MT5 sent it.
+    static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+
+    // Valid UTF-8 holding one JSON object, as strict as Chrome reads it.
+    static bool IsJsonObject(byte[] body)
+    {
+        string text;
+        try
+        {
+            text = StrictUtf8.GetString(body);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        return body[0] == (byte)'{' && Json.IsValid(text);
+    }
+
+    // Adds "term" to a message from an EA (a JSON object starting with '{'), so the panel knows which
+    // MT5 sent it.
     static byte[] Tag(byte[] body, string id)
     {
-        if (body.Length < 2 || body[0] != (byte)'{')
-            return body;
-        bool empty = (body[1] == (byte)'}');
+        int next = 1;
+        while (next < body.Length && (body[next] == (byte)' ' || body[next] == (byte)'\t' || body[next] == (byte)'\r' || body[next] == (byte)'\n'))
+            next++;
+        bool empty = (next < body.Length && body[next] == (byte)'}');
         byte[] tag = Encoding.ASCII.GetBytes("\"term\":\"" + id + "\"" + (empty ? "" : ","));
         byte[] r = new byte[body.Length + tag.Length];
         r[0] = body[0];

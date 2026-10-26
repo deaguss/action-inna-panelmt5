@@ -204,4 +204,163 @@ static class Json
         }
         return b.Append('"').ToString();
     }
+
+    // One JSON value and nothing else (RFC 8259): no comments, single quotes, bare words, trailing
+    // commas or lone surrogates, which the browser refuses.
+    public static bool IsValid(string s)
+    {
+        int i = 0;
+        return Value(s, ref i, 0) && Space(s, ref i) == s.Length;
+    }
+
+    static int Space(string s, ref int i)
+    {
+        while (i < s.Length && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n'))
+            i++;
+        return i;
+    }
+
+    static bool Value(string s, ref int i, int depth)
+    {
+        if (depth > 200 || Space(s, ref i) >= s.Length)
+            return false;
+        char c = s[i];
+        if (c == '{' || c == '[')
+        {
+            char end = (c == '{') ? '}' : ']';
+            i++;
+            if (Space(s, ref i) < s.Length && s[i] == end)
+            {
+                i++;
+                return true;
+            }
+            while (true)
+            {
+                if (c == '{')
+                {
+                    if (Space(s, ref i) >= s.Length || s[i] != '"' || !StringAt(s, ref i) || Space(s, ref i) >= s.Length || s[i] != ':')
+                        return false;
+                    i++;
+                }
+                if (!Value(s, ref i, depth + 1) || Space(s, ref i) >= s.Length)
+                    return false;
+                if (s[i] == end)
+                {
+                    i++;
+                    return true;
+                }
+                if (s[i] != ',')
+                    return false;
+                i++;
+            }
+        }
+        if (c == '"')
+            return StringAt(s, ref i);
+        foreach (string word in new[] { "true", "false", "null" })
+            if (string.CompareOrdinal(s, i, word, 0, word.Length) == 0)
+            {
+                i += word.Length;
+                return true;
+            }
+        return Number(s, ref i);
+    }
+
+    static bool StringAt(string s, ref int i)
+    {
+        i++;
+        while (i < s.Length)
+        {
+            char c = s[i++];
+            if (c == '"')
+                return true;
+            if (c < 0x20)
+                return false;
+            if (char.IsHighSurrogate(c))
+            {
+                if (i >= s.Length || !char.IsLowSurrogate(s[i]))
+                    return false;
+                i++;
+            }
+            else if (char.IsLowSurrogate(c))
+                return false;
+            else if (c == '\\')
+            {
+                if (i >= s.Length)
+                    return false;
+                char e = s[i++];
+                if (e == 'u')
+                {
+                    int unit;
+                    if (!Hex4(s, i, out unit))
+                        return false;
+                    i += 4;
+                    if (unit >= 0xDC00 && unit <= 0xDFFF)
+                        return false;
+                    if (unit >= 0xD800 && unit <= 0xDBFF)
+                    {
+                        int low;
+                        if (i + 6 > s.Length || s[i] != '\\' || s[i + 1] != 'u' || !Hex4(s, i + 2, out low) || low < 0xDC00 || low > 0xDFFF)
+                            return false;
+                        i += 6;
+                    }
+                }
+                else if ("\"\\/bfnrt".IndexOf(e) < 0)
+                    return false;
+            }
+        }
+        return false;
+    }
+
+    static bool Hex4(string s, int at, out int v)
+    {
+        v = 0;
+        if (at + 4 > s.Length)
+            return false;
+        for (int k = at; k < at + 4; k++)
+        {
+            int d = "0123456789abcdef".IndexOf(char.ToLowerInvariant(s[k]));
+            if (d < 0)
+                return false;
+            v = v * 16 + d;
+        }
+        return true;
+    }
+
+    static bool Number(string s, ref int i)
+    {
+        int start = i;
+        if (i < s.Length && s[i] == '-')
+            i++;
+        if (i < s.Length && s[i] == '0')
+            i++;
+        else if (Digits(s, ref i) == 0)
+            return false;
+        if (i < s.Length && s[i] == '.')
+        {
+            i++;
+            if (Digits(s, ref i) == 0)
+                return false;
+        }
+        if (i < s.Length && (s[i] == 'e' || s[i] == 'E'))
+        {
+            i++;
+            if (i < s.Length && (s[i] == '+' || s[i] == '-'))
+                i++;
+            if (Digits(s, ref i) == 0)
+                return false;
+        }
+        double d;   // 1e400 is JSON, but not a number the browser takes
+        return double.TryParse(s.Substring(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture, out d) && !double.IsInfinity(d);
+    }
+
+    static int Digits(string s, ref int i)
+    {
+        int n = 0;
+        while (i < s.Length && s[i] >= '0' && s[i] <= '9')
+        {
+            i++;
+            n++;
+        }
+        return n;
+    }
 }

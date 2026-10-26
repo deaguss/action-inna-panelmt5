@@ -987,6 +987,268 @@ static void FuzzChanges(std::mt19937 &rng, int rounds, ChangeStats &st)
         }
   }
 
+//--- a confirm sends what its preview showed --------------------------------------------------
+static void TestPreviewHolds()
+  {
+   SetUpBridge("a confirm sends what its preview showed");
+   s_b.Start();
+   Drain();
+   // A BUY LIMIT below the market; the ask then falls under its entry: now it would be a BUY STOP.
+   JV p = Req("preview", PreviewFields("EURUSD", "buy", true, 1.08300));
+   EXPECT(p["ok"].b && p["plan"]["type"].s == "BUY LIMIT", "a pending BUY under the market is a BUY LIMIT");
+   g_fake.sym.bid = 1.08230;
+   g_fake.sym.ask = 1.08250;
+   JV s = Req("send", Quoted("preview", p["preview"].s));
+   EXPECT(!s["ok"].b && Has(s["err"].s, "BUY STOP") && g_fake.requests.empty(), "the price crossed its entry: refused, not sent as a BUY STOP: " + s["err"].s);
+   g_fake.sym.bid = 1.08480;
+   g_fake.sym.ask = 1.08500;
+
+   // 1% with an SL set as a price: the market moves away from the stop, the same risk needs fewer lots.
+   p = Req("preview", PreviewFields("EURUSD", "buy", false, 0.0, "price", 1.08300, "r", 2.0, "percent", 1.0));
+   EXPECT(p["ok"].b && Near(p["plan"]["lots"].n, 0.50), "1% with a 20-pip stop: 0.50 lots");
+   g_fake.sym.bid += 0.00020;
+   g_fake.sym.ask += 0.00020;
+   s = Req("send", Quoted("preview", p["preview"].s));
+   EXPECT(!s["ok"].b && Has(s["err"].s, "lots changed") && g_fake.requests.empty(), "the lots would differ from the preview's: refused: " + s["err"].s);
+   g_fake.sym.bid -= 0.00020;
+   g_fake.sym.ask -= 0.00020;
+
+   // The same login on another broker's server.
+   p = Req("preview", PreviewFields("EURUSD", "buy"));
+   g_fake.server = "OtherBroker-Live";
+   s = Req("send", Quoted("preview", p["preview"].s));
+   EXPECT(!s["ok"].b && Has(s["err"].s, "another account") && g_fake.requests.empty(), "the same login on another server is another account");
+   g_fake.server = "FakeServer";
+
+   // A change previewed on a pending order, then the price crosses the new entry before the confirm.
+   g_fake.ords.push_back(FakeOrd{311, ORDER_TYPE_BUY_LIMIT, 0.10, 1.08300, 1.08100, 1.08700, 0.0, ORDER_TIME_GTC, 0, g_fake.sym.name});
+   JV m = Req("modPreview", Field("ticket", 311) + "," + Field("open", 1.08350) + "," + Field("sl", 1.08150) + "," + Field("tp", 1.08750));
+   EXPECT(m["ok"].b && m["mod"]["valid"].b && !m["mod"]["retype"].b, "a BUY LIMIT moved up, still under the market");
+   g_fake.sym.bid = 1.08310;
+   g_fake.sym.ask = 1.08330;
+   s = Req("modSend", Quoted("preview", m["preview"].s));
+   EXPECT(!s["ok"].b && Has(s["err"].s, "BUY STOP") && g_fake.requests.empty() && g_fake.ords.size() == 1 && g_fake.ords[0].ticket == 311,
+          "the market crossed the new entry: refused, the order is not replaced: " + s["err"].s);
+   g_fake.sym.bid = 1.08480;
+   g_fake.sym.ask = 1.08500;
+   ServerRefusedNothing();
+  }
+
+//--- the preview gate, fuzzed -------------------------------------------------------------
+// Requests in random order, as a panel gone wrong or a forged link would send them: previews of
+// every kind; confirms naming real, reused, expired, evicted, forged, look-alike and other-kind
+// previews; previews made on another account or server; junk frames; the clock jumping and the
+// panel reconnecting. Whatever comes, the server gets a request only from a confirm naming a preview
+// of its own kind, made on this login and server within the last minute, among the newest 32 since
+// the panel connected and never confirmed before; or from removing a pending order that is there.
+struct GateStats { int steps = 0, confirms = 0, sent = 0, refused = 0, forged = 0, cancels = 0, junk = 0; };
+
+static const char kNulFrame[] = "{\"t\":\"send\",\"id\":5,\"preview\":\"p1\0\"}";   // a NUL inside the id
+
+static std::string JsonText(const std::string &s)
+  {
+   std::string o = "\"";
+   for(unsigned char c : s)
+     {
+      if(c == '"' || c == '\\')
+        {
+         o += '\\';
+         o += (char)c;
+        }
+      else if(c < 0x20)
+        {
+         char b[8];
+         snprintf(b, sizeof b, "\\u%04x", c);
+         o += b;
+        }
+      else
+         o += (char)c;
+     }
+   return o + "\"";
+  }
+
+static void FuzzPreviewGate(std::mt19937 &rng, int steps, GateStats &st)
+  {
+   auto I = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
+   SetUpBridge("the preview gate, fuzzed");
+   s_b.Start();
+   Drain();
+   struct Pv { std::string id, kind; ulong madeMs; int64_t login; std::string server; bool used; size_t session; };
+   std::vector<Pv> pvs;
+   size_t session = 0;
+   size_t sessionStart = 0;
+   const double mid0 = g_fake.sym.bid;
+   const char *kinds[] = { "send", "modSend", "close" };
+   for(int n = 0; n < steps; n++, st.steps++)
+     {
+      if(g_fake.pos.empty())
+         AddPos(g_fake.nextTicket++, I(0, 1) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL, 0.10 * I(1, 5), mid0 + I(-50, 50) * 0.00001, 0.0, 0.0, 1);
+      if(g_fake.ords.empty())
+         g_fake.ords.push_back(FakeOrd{g_fake.nextTicket++, ORDER_TYPE_BUY_LIMIT, 0.10, mid0 - 0.00300, mid0 - 0.00500, mid0 + 0.00100, 0.0, ORDER_TIME_GTC, 0,
+                                       g_fake.sym.name});
+      // the market drifts
+      double drift = I(-3, 3) * 0.00001;
+      g_fake.sym.bid = NormalizeDouble(std::min(std::max(g_fake.sym.bid + drift, mid0 - 0.00400), mid0 + 0.00400), 5);
+      g_fake.sym.ask = NormalizeDouble(g_fake.sym.bid + 0.00020, 5);
+      auto ticket = [&]() -> long
+        {
+         int w = I(0, 9);
+         if(w < 4 && !g_fake.pos.empty())
+            return (long)g_fake.pos[I(0, (int)g_fake.pos.size() - 1)].ticket;
+         if(w < 8 && !g_fake.ords.empty())
+            return (long)g_fake.ords[I(0, (int)g_fake.ords.size() - 1)].ticket;
+         return (long)I(-5, 1000000000);
+        };
+      auto px = [&](int pips) { return Px(NormalizeDouble(g_fake.sym.bid + pips * 0.0001, 5)); };
+      size_t before = g_fake.requests.size();
+      int a = I(0, 99);
+      if(a < 16)
+        {
+         std::string slMode = (I(0, 3) == 0) ? "price" : "pips";
+         double sl = (slMode == "price") ? g_fake.sym.bid - I(-10, 40) * 0.0001 : I(0, 40);
+         JV r = Req("preview", PreviewFields(I(0, 9) ? "EURUSD" : "NOPE", I(0, 1) ? "buy" : "sell", I(0, 2) == 0, g_fake.sym.bid + I(-30, 30) * 0.0001, slMode, sl,
+                                             I(0, 1) ? "r" : "pips", I(0, 40) * 0.1, I(0, 3) ? "percent" : "lots", I(1, 30) * 0.1));
+         if(r["ok"].b)
+            pvs.push_back(Pv{r["preview"].s, "send", AiNowMs(), g_fake.login, g_fake.server, false, session});
+        }
+      else if(a < 26)
+        {
+         JV r = Req("modPreview", Field("ticket", (double)ticket()) + (I(0, 3) ? "," + std::string("\"open\":") + px(I(-40, 40)) : "") + ",\"sl\":" + px(I(-40, 40)) +
+                    ",\"tp\":" + px(I(-40, 40)));
+         if(r["ok"].b)
+            pvs.push_back(Pv{r["preview"].s, "modSend", AiNowMs(), g_fake.login, g_fake.server, false, session});
+        }
+      else if(a < 33)
+        {
+         JV r = Req("closePreview", Field("ticket", (double)ticket()) + (I(0, 2) ? "," + Field("lots", I(0, 6) * 0.05) : ""));
+         if(r["ok"].b)
+            pvs.push_back(Pv{r["preview"].s, "close", AiNowMs(), g_fake.login, g_fake.server, false, session});
+        }
+      else if(a < 70)
+        {
+         st.confirms++;
+         std::string type = kinds[I(0, 2)];
+         std::string json;        // what the confirm names, as JSON
+         std::string named;       // the id that is, when it names one exactly
+         int how = I(0, 19);
+         if(how < 12 && !pvs.empty())
+           {
+            named = pvs[I(std::max(0, (int)pvs.size() - 40), (int)pvs.size() - 1)].id;
+            json = JsonText(named);
+           }
+         else
+           {
+            st.forged++;
+            std::string real = pvs.empty() ? "p1" : pvs[I(0, (int)pvs.size() - 1)].id;
+            std::string up = real;
+            up[0] = 'P';
+            const std::string forged[] = { "\"\"", "\"p0\"", "\"p-1\"", JsonText(up), JsonText(" " + real), JsonText(real + " "), JsonText("p0" + real.substr(1)),
+                                           JsonText(real + "x"), "\"p" + std::to_string(I(1, 2000000000)) + "9\"", "1", "true", "null", "[" + JsonText(real) + "]",
+                                           "{\"id\":" + JsonText(real) + "}", JsonText(real.substr(0, real.size() - 1)), "-0", "1e9" };
+            json = forged[I(0, (int)(sizeof(forged) / sizeof(forged[0])) - 1)];
+            if(json.size() > 2 && json[0] == '"' && json.find('\\') == std::string::npos)
+               named = json.substr(1, json.size() - 2);
+            if(I(0, 4) == 0 && !pvs.empty())
+              {
+               // The real id written with escapes: the same string, so it counts as naming it.
+               named = pvs[I(0, (int)pvs.size() - 1)].id;
+               json = "\"";
+               for(char c : named)
+                 {
+                  char b[8];
+                  snprintf(b, sizeof b, "\\u%04x", (unsigned char)c);
+                  json += b;
+                 }
+               json += "\"";
+              }
+           }
+         // What the bridge may do: find the preview the confirm names, exactly.
+         bool legit = false;
+         for(size_t i = 0; i < pvs.size(); i++)
+           {
+            Pv &v = pvs[i];
+            bool alive = v.session == session && i >= sessionStart && pvs.size() - i <= AI_PREVIEW_MAX;
+            if(v.id != named || !alive || v.kind != type)
+               continue;
+            legit = !v.used && AiNowMs() - v.madeMs <= AI_PREVIEW_TTL_MS && v.login == g_fake.login && v.server == g_fake.server;
+            v.used = true;
+            break;
+           }
+         JV r = Req(type, "\"preview\":" + json);
+         size_t made = g_fake.requests.size() - before;
+         EXPECT(made == 0 || legit, "a server request only from a confirm of a usable preview: " + type + " " + json + " (" + r["err"].s + ")");
+         EXPECT(!r["ok"].b || legit, "a confirm says it went through only for a usable preview: " + type + " " + json);
+         EXPECT(made <= 4, "one confirm makes at most a few server requests (retries, SL/TP after a slipped fill, replacing an order)");
+         if(r["ok"].b)
+            st.sent++;
+         else
+            st.refused++;
+        }
+      else if(a < 76)
+        {
+         st.cancels++;
+         long t = ticket();
+         bool pending = false;
+         for(auto &o : g_fake.ords)
+            pending = pending || (long)o.ticket == t;
+         JV r = Req("cancel", Field("ticket", (double)t));
+         EXPECT(g_fake.requests.size() == before || pending, "a removal only of a pending order that is there: #" + std::to_string(t));
+         EXPECT(g_fake.requests.size() - before <= 1 && (!r["ok"].b || pending), "and only that one");
+        }
+      else if(a < 82)
+         Advance(I(0, 3) == 0 ? I(30000, 70000) : I(0, 2000));
+      else if(a < 85)
+         g_fake.login = (g_fake.login == 12345678) ? 87654321 : 12345678;
+      else if(a < 88)
+         g_fake.server = (g_fake.server == "FakeServer") ? "FakeServer-2" : "FakeServer";
+      else if(a < 90)
+        {
+         // the panel reconnects: the previews it had are gone
+         s_b.Start();
+         Drain();
+         session++;
+         sessionStart = pvs.size();
+        }
+      else if(a < 95)
+        {
+         st.junk++;
+         const std::string junk[] = { "", "{", "}", "[]", "null", "{\"t\":\"send\"}", "{\"t\":\"send\",\"id\":0,\"preview\":\"p1\"}",
+                                      "{\"t\":\"send\",\"id\":-4,\"preview\":\"p1\"}", "{\"t\":\"send\",\"id\":\"x\",\"preview\":\"p1\"}",
+                                      "{\"t\":\"send\",\"id\":7,\"preview\":\"p1\"} trailing", "{\"t\":\"send\" \"id\":7}", "{\"t\":\"send\",\"id\":7,\"preview\":\"p1\"",
+                                      "{'t':'send','id':7,'preview':'p1'}", "{\"t\":\"se\\u006ed\",\"id\":1e400}", "{\"t\":[\"send\"],\"id\":5}",
+                                      "\xff\xfe{\"t\":\"send\"}", std::string(kNulFrame, sizeof kNulFrame - 1) };
+         std::string j = junk[I(0, (int)(sizeof(junk) / sizeof(junk[0])) - 1)];
+         if(I(0, 3) == 0)
+           {
+            j.clear();
+            for(int k = I(0, 60); k > 0; k--)
+               j += (char)I(1, 255);
+           }
+         s_b.Handle(string(j));
+         std::vector<JV> got = Drain();
+         // A frame that names a preview sends nothing unless the oracle allows that very preview;
+         // these name "p1" at most, so the server must not have moved unless p1 is usable.
+         bool p1Usable = false;
+         for(size_t i = 0; i < pvs.size(); i++)
+            if(pvs[i].id == "p1" && pvs[i].session == session && i >= sessionStart && !pvs[i].used && pvs[i].kind == "send" &&
+               AiNowMs() - pvs[i].madeMs <= AI_PREVIEW_TTL_MS && pvs[i].login == g_fake.login && pvs[i].server == g_fake.server)
+               p1Usable = true;
+         EXPECT(g_fake.requests.size() == before || p1Usable, "a junk frame moves nothing on the server: " + j.substr(0, 60));
+         for(size_t i = 0; i < pvs.size(); i++)
+            if(pvs[i].id == "p1" && g_fake.requests.size() != before)
+               pvs[i].used = true;
+        }
+      else
+        {
+         const char *other[] = { "symbols", "watch", "recall", "pick", "fly", "link.start", "" };
+         Req(other[I(0, 6)], Quoted("symbol", I(0, 1) ? "EURUSD" : "X") + "," + Quoted("ticker", "FX:EURUSD") + "," + Quoted("side", "buy"));
+         EXPECT(g_fake.requests.size() == before, "a request that is not a confirm moves nothing on the server");
+        }
+     }
+   EXPECT(st.sent > 0 && st.refused > 0 && st.forged > 0, "the fuzz both sent and refused orders (" + std::to_string(st.sent) + " sent, " +
+          std::to_string(st.refused) + " refused)");
+  }
+
 //--- the link ---------------------------------------------------------------------------
 static void TestHostElection()
   {
@@ -1179,6 +1441,129 @@ static void TestLinkEndToEnd()
    EXPECT(g_fake.pipe.fromEa.empty(), "switched off by its input: never connects");
   }
 
+//--- the link's key, fuzzed ---------------------------------------------------------------
+// The first frame on the pipe in many shapes: the key exactly, reordered, escaped, padded with
+// whitespace, split across reads; and near misses: a character off, cut short, longer, upper case,
+// with a space, under another name, nested, as another type, after a wrong frame, in broken JSON,
+// and a good frame with one byte changed. The EA serves only when its first frame's "t" is "link" and
+// its "key" is the key, exactly.
+struct KeyStats { int rounds = 0, served = 0, refused = 0; };
+
+static void FuzzLinkKey(std::mt19937 &rng, int rounds, KeyStats &st)
+  {
+   auto I = [&](int lo, int hi) { return std::uniform_int_distribution<int>(lo, hi)(rng); };
+   const std::string K = kKey;
+   const std::string good = "{\"t\":\"link\",\"key\":\"" + K + "\"}";
+   for(int n = 0; n < rounds; n++, st.rounds++)
+     {
+      s_case = "the link's key, fuzzed";
+      g_fake.Reset();
+      _Symbol = string(g_fake.sym.name);
+      SetKeyFile(kKey);
+      g_fake.pipe.serving = true;
+      std::string off = K;
+      off[I(0, 31)] = "0123456789abcdef"[I(0, 15)];
+      std::string upper = K;
+      for(char &c : upper)
+         c = (char)toupper((unsigned char)c);
+      std::string escaped;
+      for(char c : K)
+        {
+         char b[8];
+         snprintf(b, sizeof b, "\\u%04x", (unsigned char)c);
+         escaped += b;
+        }
+      std::string first;
+      bool want = false;
+      bool split = false;
+      int v = I(0, 31);
+      switch(v)
+        {
+         case 0: first = good; want = true; break;
+         case 1: first = "{\"key\":\"" + K + "\",\"t\":\"link\"}"; want = true; break;
+         case 2: first = " {\n\t\"t\" : \"link\" ,\r\n \"key\" : \"" + K + "\" , \"x\":[1,{\"y\":2}] } "; want = true; break;
+         case 3: first = "{\"t\":\"link\",\"key\":\"" + escaped + "\"}"; want = true; break;
+         case 4: first = "{\"t\":\"link\",\"key\":\"wrong\",\"key\":\"" + K + "\"}"; want = true; break;   // the last of a repeated key counts
+         case 5: first = good; want = true; split = true; break;
+         case 6: first = "{\"t\":\"link\",\"key\":\"" + off + "\"}"; want = (off == K); break;
+         case 7: first = "{\"t\":\"link\",\"key\":\"" + K.substr(0, I(0, 31)) + "\"}"; break;
+         case 8: first = "{\"t\":\"link\",\"key\":\"" + K + "0\"}"; break;
+         case 9: first = "{\"t\":\"link\",\"key\":\"" + upper + "\"}"; break;
+         case 10: first = "{\"t\":\"link\",\"key\":\" " + K + "\"}"; break;
+         case 11: first = "{\"t\":\"link\",\"key\":\"" + K + " \"}"; break;
+         case 12: first = "{\"t\":\"Link\",\"key\":\"" + K + "\"}"; break;
+         case 13: first = "{\"t\":\"link \",\"key\":\"" + K + "\"}"; break;
+         case 14: first = "{\"key\":\"" + K + "\"}"; break;
+         case 15: first = "{\"t\":\"link\",\"Key\":\"" + K + "\"}"; break;
+         case 16: first = "{\"t\":\"link\",\"key\":[\"" + K + "\"]}"; break;
+         case 17: first = "{\"t\":\"link\",\"link\":{\"key\":\"" + K + "\"}}"; break;
+         case 18: first = "{\"t\":\"link\",\"key\":\"" + K + "\",\"key\":\"wrong\"}"; break;
+         case 19: first = good + " x"; break;
+         case 20: first = good.substr(0, good.size() - 1); break;
+         case 21: first = "[" + good + "]"; break;
+         case 22: first = ""; break;
+         case 23: first = "{\"t\":\"link\",\"key\":null}"; break;
+         case 24: first = "{\"t\":\"link\",\"key\":true}"; break;
+         case 25: first = "{\"t\":\"link\",\"key\":\"\"}"; break;
+         case 26: first = "{\"t\":\"watch\",\"id\":1,\"symbol\":\"EURUSD\",\"key\":\"" + K + "\"}"; break;
+         default:
+           {
+            // In this compact frame any changed byte breaks the JSON, the "t" or the key.
+            first = good;
+            int at = I(0, (int)first.size() - 1);
+            char was = first[at];
+            first[at] = (char)I(1, 255);
+            want = (first[at] == was);
+            break;
+           }
+        }
+      CAiLink link;
+      link.Init(Cfg(), true);
+      bool wrongFirst = false;
+      if(I(0, 5) == 0)
+        {
+         std::string k = I(0, 1) ? off : std::string("x");
+         PushFrame("{\"t\":\"link\",\"key\":\"" + k + "\"}");
+         wrongFirst = (k != K);
+         want = want || !wrongFirst;   // a right key first: served whatever follows
+        }
+      std::string rest;
+      if(split)
+        {
+         uint32_t len = (uint32_t)first.size();
+         for(int i = 0; i < 4; i++)
+            g_fake.pipe.toEa += (char)((len >> (8 * i)) & 0xFF);
+         g_fake.pipe.toEa += first.substr(0, 10);
+         rest = first.substr(10);
+        }
+      else
+        {
+         PushFrame(first);
+         PushFrame("{\"t\":\"watch\",\"id\":1,\"symbol\":\"EURUSD\"}");
+        }
+      link.Timer();
+      if(split)
+        {
+         // the rest of the key frame arrives on a later read
+         g_fake.pipe.toEa += rest;
+         PushFrame("{\"t\":\"watch\",\"id\":1,\"symbol\":\"EURUSD\"}");
+        }
+      for(int k = 0; k < 3; k++)
+        {
+         Advance(25);
+         link.Timer();
+        }
+      bool served = !g_fake.pipe.fromEa.empty();
+      bool expect = want && !wrongFirst;
+      EXPECT(served == expect, std::string(expect ? "served: " : "refused: ") + "case " + std::to_string(v) + ": " + first.substr(0, 90));
+      if(served)
+         st.served++;
+      else
+         st.refused++;
+      link.Deinit();
+     }
+  }
+
 int main(int argc, char **argv)
   {
    MqlTrapZeroDivide();
@@ -1199,6 +1584,7 @@ int main(int argc, char **argv)
    TestChangesClosesCancels();
    TestFifo();
    TestBrokers();
+   TestPreviewHolds();
    int bridgeChecks = s_pass + s_fail - jsonChecks;
    int bridgeFails = s_fail - jsonFails;
    printf("bridge: %d checks over %d broker profiles, %d failed\n", bridgeChecks, kBrokerCount, bridgeFails);
@@ -1213,9 +1599,22 @@ int main(int argc, char **argv)
    printf("changes: %d allowed and sent, of which %d turned a pending order into the other type and %d set break-even; "
           "%d break-evens refused as too early\n", st.allowed, st.retyped, st.breakEven, st.breakEvenRefused);
 
+   int gateSteps = (argc > 4) ? atoi(argv[4]) : 100000;
+   GateStats gs;
+   int before = s_pass + s_fail;
+   int failsBefore = s_fail;
+   FuzzPreviewGate(rng, gateSteps, gs);
+   printf("preview gate: %d checks over %d requests (%d confirms: %d sent, %d refused, %d forged; %d removals; %d junk frames), %d failed\n",
+          s_pass + s_fail - before, gs.steps, gs.confirms, gs.sent, gs.refused, gs.forged, gs.cancels, gs.junk, s_fail - failsBefore);
+
+   before = s_pass + s_fail;
+   failsBefore = s_fail;
    TestHostElection();
    TestLinkKey();
    TestLinkEndToEnd();
-   printf("link: %d checks, %d failed\n", s_pass + s_fail - jsonChecks - bridgeChecks - changeChecks, s_fail - jsonFails - bridgeFails - changeFails);
+   KeyStats ks;
+   FuzzLinkKey(rng, (argc > 5) ? atoi(argv[5]) : 20000, ks);
+   printf("link: %d checks (%d first frames fuzzed: %d served, %d refused), %d failed\n", s_pass + s_fail - before, ks.rounds, ks.served, ks.refused,
+          s_fail - failsBefore);
    return s_fail ? 1 : 0;
   }

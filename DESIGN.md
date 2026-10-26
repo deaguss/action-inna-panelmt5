@@ -45,7 +45,8 @@ except where this table says otherwise.
 | Trades | Rows parted by a line, actions small; the card the one bordered surface | A list reads as one list; the change being made stands out |
 | Width | Works from 320px, Chrome's narrowest side panel | The panel shares the window with the chart |
 | Redraws | Built once and updated in place four times a second; trade rows kept per ticket; a card built once per opening | A redraw never takes a click, a cursor or an open list |
-| Confirm | Off until MT5's numbers for the latest input are in, then 0.3 s more | A click on numbers that just changed is not a decision on them |
+| Confirm | Off until MT5's numbers for the latest input (typed or dragged) are in, then 0.3 s more | A click on numbers that just changed is not a decision on them |
+| Where it shows | Only beside TradingView: it closes itself 1.5 s after another site's tab comes to the front, unless an order is on its way or an error about one is showing | A panel that trades should not linger next to pages it has nothing to do with; a quick look elsewhere should not cost a reconnect |
 | Typed prices | A typo stops the preview with words; only an empty field means none | "No stop loss" must never come from a slip of the finger |
 | Status | An error or warning about the plan beats a passing message | What stops the order has to be seen at once |
 | Lost answers | "May have gone through: check Open trades", never "not sent" | A trader who believes nothing was sent may send it twice |

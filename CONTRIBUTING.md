@@ -33,8 +33,10 @@ onto the chart again, before testing a change.
 3. `bash tests/native/run.sh` (Git Bash, Node.js, g++) must end with "native tests: all passed". It
    runs the same tests and the drag-and-confirm scenarios without MT5 (README section 11).
 4. For a change to the link: `scripts\build-link.ps1`, then `node tests/link/run.js` must report 0
-   failed.
-5. For a change to the side panel: `node tests/extension/run.mjs` must report 0 failed. Try what you
+   failed. Its fuzz sends 5,000 frames each way; `FUZZ_ROUNDS=50000` and `FUZZ_SEED=<n>` run more or
+   other ones, and the same seed replays the same frames.
+5. For a change to the side panel: `node tests/extension/run.mjs` must report 0 failed. It includes
+   a security fuzz of about 800,000 checks (`FUZZ_SCALE` and `FUZZ_SEED` as above). Try what you
    changed in a browser tab with `node tests/extension/serve.js` (README section 11), at the side
    panel's width (320 to 400 px), in both themes.
 6. For anything the panel shows or sends, test it on a **demo account** and say in the pull request

@@ -3,9 +3,10 @@
 // against a stand-in port.
 //   node tests/extension/run.mjs
 import * as fmt from '../../extension/lib/format.js';
-import { tickerFromTab } from '../../extension/lib/tv.js';
+import { tickerFromTab, isTradingView } from '../../extension/lib/tv.js';
 import { Link, explainLinkError } from '../../extension/lib/link.js';
 import { wantedLines, parseLineKey } from '../../extension/lib/lines.js';
+import { fuzz } from './fuzz.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -111,6 +112,23 @@ function testTradingView() {
   same(t('https://www.tradingview.com/chart/abc/', '(2) XAUUSD 2,650.12 ▲ +0.45%'), 'XAUUSD', 'a count of unread alerts before the symbol');
   same(t('https://www.tradingview.com/chart/abc/', 'BTCUSDT.P 67,000 ▲ +1.2%'), 'BTCUSDT.P', 'a perpetual future');
   same(t('https://www.tradingview.com/chart/abc/?symbol=OANDA%3AXAUUSD', 'Unnamed'), 'OANDA:XAUUSD', 'a title without a symbol leaves the address');
+  same(t('http://www.tradingview.com/chart/abc/?symbol=OANDA%3AXAUUSD', ''), '', 'not over https');
+  same(t('https://www.tradingview.com/symbols/%ZZ/', ''), '', 'a broken escape in a symbol page is no ticker, not an error');
+
+  // Where the side panel stays open: TradingView's sites, and nothing that only looks like them.
+  const tv = isTradingView;
+  same(tv('https://www.tradingview.com/chart/abc/'), true, 'a chart');
+  same(tv('https://tradingview.com/'), true, 'the home page, without www');
+  same(tv('https://in.tradingview.com/markets/'), true, "a country's site, not a chart");
+  same(tv(undefined), false, "a tab whose address Chrome doesn't show the panel");
+  same(tv('https://example.com/'), false, 'another site');
+  same(tv('chrome://newtab/'), false, 'a new tab');
+  same(tv('http://www.tradingview.com/'), false, 'not over https');
+  same(tv('https://www.tradingview.com.evil.net/'), false, 'a lookalike host');
+  same(tv('https://eviltradingview.com/'), false, 'a name that ends the same');
+  same(tv('https://www.tradingview.com@evil.net/'), false, 'TradingView as the user name of another site');
+  same(tv('https://evil.net/?r=https://www.tradingview.com/'), false, 'TradingView in the query of another site');
+  same(tv('https://tradingvіew.com/'), false, 'a Cyrillic letter in the name');
 }
 
 //--- the link connection -------------------------------------------------------------
@@ -281,5 +299,8 @@ testTradingView();
 await testLink();
 testLines();
 testExplain();
+const scale = Number(process.env.FUZZ_SCALE) || 1;
+const fuzzed = await fuzz(expect, Number(process.env.FUZZ_SEED) || 20261026, scale);
+console.log('extension fuzz: ' + fuzzed + ' checks');
 console.log('extension tests: ' + pass + ' checks, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

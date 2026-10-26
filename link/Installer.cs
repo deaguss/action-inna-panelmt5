@@ -18,9 +18,12 @@ static class Installer
 {
     const string HostName = "com.actioninna.link";
 
-    // The extension's ids: the development one, from the key in extension/manifest.json, and the
-    // stores' once it is published. --extension-id adds more.
-    static readonly string[] ExtensionIds = { "knlcnmdecbojpcoggfahghifkbalkpdk" };
+    // The extension's ids in the stores, once it is published. --extension-id adds more.
+    static readonly string[] ExtensionIds = { };
+
+    // The unpacked panel's id, from the key in extension/manifest.json, allowed with --dev only. That
+    // key is public, so any unpacked extension can carry it and have this id.
+    const string DevExtensionId = "knlcnmdecbojpcoggfahghifkbalkpdk";
 
     static readonly string[] Browsers =
     {
@@ -47,7 +50,11 @@ static class Installer
         Console.WriteLine("ActionInna link: " + exe);
 
         List<string> ids = new List<string>(ExtensionIds);
+        if (dev)
+            ids.Add(DevExtensionId);
         ids.AddRange(Program.Values(args, "--extension-id"));
+        if (ids.Count == 0)
+            Console.WriteLine("No extension may start the link yet: run this again with --extension-id <the panel's id>.");
         File.WriteAllText(Manifest, ManifestJson(exe, ids), new UTF8Encoding(false));
         if (registry)
         {

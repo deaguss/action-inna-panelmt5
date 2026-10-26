@@ -11,11 +11,12 @@
     reply({ ok: true });
   });
 
+  // Any script on TradingView's page can post here: only a line key and a price pass.
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data || e.data.actionInna !== 'moved') return;
-    const key = String(e.data.key);
-    const price = Number(e.data.price);
-    if (!/^(?:pv|t\d{1,20})-(?:entry|sl|tp)$/.test(key) || !Number.isFinite(price) || price <= 0) return;
+    const key = e.data.key;
+    const price = e.data.price;
+    if (typeof key !== 'string' || !/^(?:pv|t\d{1,20})-(?:entry|sl|tp)$/.test(key) || typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return;
     chrome.runtime.sendMessage({ t: 'ai-moved', key, price }).catch(() => {});
   });
 })();
