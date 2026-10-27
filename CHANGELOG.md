@@ -227,5 +227,5 @@ First public version (EA version 1.00). Release notes: [docs/releases/v1.0.0.md]
   examples and about 92,000 generated scenarios per round.
 
 [Unreleased]: https://github.com/deaguss/action-inna-panelmt5/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/deaguss/action-inna-panelmt5/compare/mt5...v1.1.0
-[1.0.0]: https://github.com/deaguss/action-inna-panelmt5/releases/tag/mt5
+[1.1.0]: https://github.com/deaguss/action-inna-panelmt5/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/deaguss/action-inna-panelmt5/releases/tag/v1.0.0
