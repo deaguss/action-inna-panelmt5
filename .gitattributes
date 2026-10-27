@@ -3,6 +3,8 @@
 *.mq5 text eol=crlf
 *.mqh text eol=crlf
 *.ps1 text eol=crlf
+# cmd.exe misreads labels and goto in a batch file with LF line endings.
+*.bat text eol=crlf
 # Shell scripts keep LF everywhere: Bash stops at a CR.
 *.sh text eol=lf
 

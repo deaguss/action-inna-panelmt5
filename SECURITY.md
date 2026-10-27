@@ -26,7 +26,9 @@ Everything runs on your PC. These are the paths an order could take, and what gu
 - **The browser:** it starts the link only for the extension IDs in the link's manifest. Web pages
   can't use native messaging, and neither can other extensions. The download's installer allows the
   store IDs only. The unpacked panel's development ID comes from a public key, so any unpacked
-  extension could carry it: only `--install --dev` allows it.
+  extension could carry it: only `--install --dev` allows it, which is what `install.bat` runs for
+  the panel loaded unpacked from the repository. With that set-up, load unpacked only extensions
+  you trust.
 - **The pipe** (`\\.\pipe\ActionInna.Link`): only your Windows user can open the link's pipe, and
   only from this PC (the NETWORK group, which a connection over file sharing carries, is denied). A
   pipe name is shared by every user of the PC, so another user could make a pipe of the same name

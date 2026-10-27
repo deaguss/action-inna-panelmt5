@@ -27,7 +27,8 @@ done by hand, by the owner of the store and repository accounts.
 3. **Before you submit,** add that ID to `ExtensionIds` in `link/Installer.cs`. Then run
    `scripts\build-link.ps1` and `scripts\release.ps1` again. The link answers only the extension IDs
    it was installed with, so without this the store's panel can't reach it. The development ID is
-   allowed only by `--install --dev`, never by the download's installer.
+   allowed only by `--install --dev` (and so by the repository's `install.bat`), never by the
+   download's installer.
 4. **Store listing:**
    - Summary: the manifest's description ("Risk-sized MetaTrader 5 orders in a side panel next to
      TradingView, sent through your own MT5.").

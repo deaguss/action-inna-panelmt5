@@ -9,7 +9,7 @@
 bool g_aiDebugLog = false;
 
 // A zero divide stops an EA without OnDeinit, which would leave the One-Click panel hidden,
-// so every division goes through here.
+// so a division goes through here unless its own guard sits right before it.
 double AiSafeDiv(const double a, const double b, const double fallback = 0.0)
   {
    if(b == 0.0 || !MathIsValidNumber(a) || !MathIsValidNumber(b))

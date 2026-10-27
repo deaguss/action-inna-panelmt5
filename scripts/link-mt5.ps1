@@ -46,19 +46,6 @@ $Links = @(
     @{ Link = 'MQL5\Files\ActionInna';   Target = 'runtime' }
 )
 
-function Get-Terminals {
-    $root = Join-Path $env:APPDATA 'MetaQuotes\Terminal'
-    if (-not (Test-Path -LiteralPath $root)) { return @() }
-    Get-ChildItem -LiteralPath $root -Directory |
-        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'MQL5') } |
-        ForEach-Object {
-            $origin = Join-Path $_.FullName 'origin.txt'
-            $install = ''
-            if (Test-Path -LiteralPath $origin) { $install = (Read-TextAuto $origin).Trim() }
-            [pscustomobject]@{ DataFolder = $_.FullName; Install = $install }
-        }
-}
-
 # Pick the data folder.
 if (-not $DataFolder) {
     if ($Unlink -and (Test-Path -LiteralPath $ConfigPath)) {
@@ -133,18 +120,7 @@ foreach ($dir in $templateDirs) {
 }
 
 # MetaEditor, for build.ps1.
-if (-not $MetaEditor) {
-    $origin = Join-Path $DataFolder 'origin.txt'
-    if (Test-Path -LiteralPath $origin) {
-        $candidate = Join-Path (Read-TextAuto $origin).Trim() 'metaeditor64.exe'
-        if (Test-Path -LiteralPath $candidate) { $MetaEditor = $candidate }
-    }
-    if (-not $MetaEditor) {
-        # A portable terminal keeps its data next to the exe.
-        $candidate = Join-Path $DataFolder 'metaeditor64.exe'
-        if (Test-Path -LiteralPath $candidate) { $MetaEditor = $candidate }
-    }
-}
+if (-not $MetaEditor) { $MetaEditor = Find-MetaEditor $DataFolder }
 if ($MetaEditor -and -not (Test-Path -LiteralPath $MetaEditor)) {
     throw "$MetaEditor does not exist."
 }

@@ -52,6 +52,24 @@ The test script and how to run it are in section 10.
 
 ## 1. Install
 
+### One click
+
+You need MetaTrader 5 desktop for Windows, opened at least once.
+
+1. Get this repository into a folder you will keep: **Code > Download ZIP** on GitHub and unzip it,
+   or clone it.
+2. Double-click **`install.bat`**. It compiles ActionInna with the MetaEditor that comes with MT5,
+   copies it into every MT5 on this PC, and sets up the link for the browser side panel (section 4).
+   It needs no administrator rights and changes nothing for other Windows users. If Windows warns
+   about a file from the internet, choose **Run** (or **More info > Run anyway**).
+3. In MT5: **Navigator > right-click > Refresh**, then section 2.
+4. For the browser side panel: open `chrome://extensions` (Edge and Brave too), turn on **Developer
+   mode**, press **Load unpacked** and pick the `extension` folder.
+
+The link and the side panel run from this folder, so keep it where it is. After an update, close the
+side panel and double-click `install.bat` again. `uninstall.bat` removes the link; ActionInna itself
+is removed in MT5 and in the browser. For a portable MT5: `install.bat -Mt5 "<its data folder>"`.
+
 ### This PC (development set-up)
 
 In PowerShell, from this folder:
@@ -239,8 +257,8 @@ Everything it shows comes from the ActionInna EA in MT5, and everything it sends
   you installed it for, minimised.
 
 Neither the side panel nor the link is released yet: for now the panel is loaded unpacked, and the
-link built from this repository (section 11). How the pieces talk is in
-[docs/protocol.md](docs/protocol.md).
+link built from this repository, by `install.bat` (section 1) or by hand (section 11). How the
+pieces talk is in [docs/protocol.md](docs/protocol.md).
 
 ## 5. Hotkeys
 
@@ -495,9 +513,11 @@ extension/             the browser side panel: plain JavaScript, no build step
   tv/              put into TradingView's tab: page.js draws the lines and reports drags, bridge.js relays
   icons/           drawn by scripts/make-icons.mjs
   dev/mock.js      a stand-in for the link and MT5, for working on the panel in a plain tab (not published)
+install.bat, uninstall.bat   the one-click install (section 1) and the link's removal
 scripts/
+  install.ps1      what install.bat runs: build.ps1, build-link.ps1, then ActionInnaLink.exe --install --dev
   link-mt5.ps1     junctions into the MT5 data folder (-Unlink removes them)
-  build.ps1        MetaEditor command-line build, logs in build\
+  build.ps1        MetaEditor command-line build of the sources in place, logs in build\
   build-link.ps1   builds build\ActionInnaLink.exe with the C# compiler that comes with Windows
   release.ps1      packs build\release: the side panel for the stores, the link and the EA for Windows
   make-icons.mjs   draws the side panel's icons (node, no dependencies)

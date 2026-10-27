@@ -135,6 +135,10 @@ All notable changes to ActionInna are recorded here. The format follows
     frames against the link's key;
   - link (`tests/link/run.js`): the pipe's owner and access list, and a differential fuzz of frames
     both ways (5,000 each way by default; `FUZZ_ROUNDS` and `FUZZ_SEED` change it).
+- One-click install from the repository's folder: `install.bat` compiles the EA with the MetaEditor
+  that comes with MT5, builds the link, copies the EA into every MT5 on the PC and registers the link
+  for the unpacked side panel (this Windows user, no administrator rights). `uninstall.bat` removes
+  the link's registration. A portable MT5 is installed into with `install.bat -Mt5 "<data folder>"`.
 
 ### Security
 
@@ -186,6 +190,9 @@ All notable changes to ActionInna are recorded here. The format follows
   `AiMemFromPlan`), used by the chart panel and the browser panel alike.
 - On the chart that serves the browser panel, the EA's timer runs every 25 ms; the panel keeps its
   own pace.
+- `scripts\build.ps1` compiles the sources where they are and finds MetaEditor by itself, so it no
+  longer needs `scripts\link-mt5.ps1` first (that script still links the sources into MT5 for
+  editing in MetaEditor). A failed build still exits with 1.
 
 ## [1.0.0] - 2026-10-21
 
