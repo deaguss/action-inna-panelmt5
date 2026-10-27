@@ -6,6 +6,10 @@ All notable changes to ActionInna are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-27
+
+EA version 1.10, side panel 1.1.0. Release notes: [docs/releases/v1.1.0.md](docs/releases/v1.1.0.md).
+
 ### Added
 
 - Changing open trades with a confirm pop-up. ActionInna draws its own lines for every position and
@@ -36,8 +40,7 @@ All notable changes to ActionInna are recorded here. The format follows
   execution mode, expiry types, order types, SL/TP allowed, volume and price grids, stops and freeze
   levels, netting, no opposite positions, FIFO closes, requotes and slippage.
 - CI runs the native tests on every push.
-- The EA's side of a browser panel for Chrome (in development; the panel and its link program are
-  not released yet). The protocol is in `docs/protocol.md`.
+- The EA's side of a browser panel for Chrome. The protocol is in `docs/protocol.md`.
   - One ActionInna chart per MT5 serves the panel; another takes over within seconds when that chart
     closes. Input "Serve the browser side panel", on by default.
   - The EA talks to the link through a named pipe, which needs no MT5 setting. It serves the link
@@ -122,7 +125,6 @@ All notable changes to ActionInna are recorded here. The format follows
 - Releases: `scripts/release.ps1` packs the side panel for the stores (without `dev/` and the
   development key) and the link with the EA for Windows. `docs/publish.md` describes publishing, and
   `docs/privacy.md` is the privacy policy. SECURITY.md describes how the browser panel is guarded.
-
 - The side panel closes itself when another site's tab is in front of its window (once it may read
   TradingView's tabs). A look at another tab of under 1.5 seconds keeps it open. It waits for an
   order or change on its way, and keeps an error about one on screen for its time.
@@ -224,5 +226,6 @@ First public version (EA version 1.00). Release notes: [docs/releases/v1.0.0.md]
 - `link-mt5.ps1` and `build.ps1` for a linked development set-up; `ActionInnaTests` with worked
   examples and about 92,000 generated scenarios per round.
 
-[Unreleased]: https://github.com/deaguss/action-inna-panelmt5/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/deaguss/action-inna-panelmt5/releases/tag/v1.0.0
+[Unreleased]: https://github.com/deaguss/action-inna-panelmt5/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/deaguss/action-inna-panelmt5/compare/mt5...v1.1.0
+[1.0.0]: https://github.com/deaguss/action-inna-panelmt5/releases/tag/mt5

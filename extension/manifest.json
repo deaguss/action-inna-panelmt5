@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ActionInna",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "Risk-sized MetaTrader 5 orders in a side panel next to TradingView, sent through your own MT5.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmMJ3JFFQeOCjCJ5GyvKin9ymtLxuwJhptT+LPphcCyHN8GtwNfk03UjjC6W0LOiTW0jx8eSQhUCf3lS1bfvOl/t2BphLQRhIyFseVlSx5ngaOHa/QspYzaOJuNnkDsNH1uNDFJKq7p/juq4ICXSke7jSxUf+2IWJuF5n/44ytYjwuB5S2QPPSCoU1NMellWGIAOAHdIhbdlY8uv+1V7EbcYltXeggPBEgFIzFxM1xLVkhfcn/t+QWgy+Ed/tLXS0RJumKybCYdwzH0GiV5fifo0r3o/gd6W3/nbqJiDroGrek6XICPyEt2GmfJjHzjlZvavwvXTU5DeudaD71lwA8QIDAQAB",
   "minimum_chrome_version": "116",

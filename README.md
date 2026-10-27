@@ -256,9 +256,9 @@ Everything it shows comes from the ActionInna EA in MT5, and everything it sends
 - **MT5 starts by itself.** When the panel opens and no MT5 is connected, the link starts the MT5s
   you installed it for, minimised.
 
-Neither the side panel nor the link is released yet: for now the panel is loaded unpacked, and the
-link built from this repository, by `install.bat` (section 1) or by hand (section 11). How the
-pieces talk is in [docs/protocol.md](docs/protocol.md).
+The side panel isn't in the Chrome Web Store yet: for now it is loaded unpacked, and the link built
+from this repository, by `install.bat` (section 1) or by hand (section 11). How the pieces talk is
+in [docs/protocol.md](docs/protocol.md).
 
 ## 5. Hotkeys
 
