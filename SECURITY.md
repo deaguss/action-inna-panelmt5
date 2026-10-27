@@ -33,7 +33,9 @@ Everything runs on your PC. These are the paths an order could take, and what gu
   only from this PC (the NETWORK group, which a connection over file sharing carries, is denied). A
   pipe name is shared by every user of the PC, so another user could make a pipe of the same name
   first, and a pipe keeps the security of whoever made it. So:
-  - the link serves only a pipe its own Windows user owns, and otherwise says it could not open it;
+  - the link serves only a pipe its own Windows user owns (or, when the link runs as administrator,
+    the Administrators group, which Windows then makes the owner), and otherwise says it could not
+    open it;
   - the EA serves nothing until the first frame carries the key from `link.key`, which only your
     Windows user can read.
 - **The link:** it passes the browser only frames the browser accepts (valid UTF-8 holding one JSON

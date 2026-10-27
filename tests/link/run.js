@@ -315,7 +315,8 @@ function testInstaller() {
 
 //--- security ---------------------------------------------------------------------------
 // The pipe's owner and access list, read through a client connection as Windows reports them:
-// owned by this Windows user, NETWORK (another PC, over file sharing) denied first, this user allowed.
+// owned as this user's token owns new objects (the user, or the Administrators group when it runs
+// elevated, as on CI), NETWORK (another PC, over file sharing) denied first, this user allowed.
 async function testPipeSecurity() {
   const e = env('acl');
   const h = startHost(e);
@@ -323,12 +324,15 @@ async function testPipeSecurity() {
   const ps = "$c = New-Object System.IO.Pipes.NamedPipeClientStream('.', '" + e.ACTIONINNA_PIPE + "', [System.IO.Pipes.PipeDirection]::InOut);" +
     ' $c.Connect(3000); $a = $c.GetAccessControl(); $sid = [System.Security.Principal.SecurityIdentifier];' +
     " 'owner ' + $a.GetOwner($sid).Value; 'me ' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;" +
+    " 'tokenowner ' + [System.Security.Principal.WindowsIdentity]::GetCurrent().Owner.Value;" +
     " $a.GetAccessRules($true, $true, $sid) | ForEach-Object { 'rule ' + $_.IdentityReference.Value + ' ' + $_.AccessControlType }; $c.Dispose()";
   const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { encoding: 'utf8' });
-  const lines = (r.stdout || '').split(/\r?\n/).filter((l) => /^(owner|me|rule) /.test(l));
+  const lines = (r.stdout || '').split(/\r?\n/).filter((l) => /^(owner|me|tokenowner|rule) /.test(l));
   const me = (lines.find((l) => l.startsWith('me ')) || '').slice(3);
+  const tokenOwner = (lines.find((l) => l.startsWith('tokenowner ')) || '').slice(11);
   const rules = lines.filter((l) => l.startsWith('rule ')).map((l) => l.slice(5));
-  expect(me && lines.includes('owner ' + me), 'the pipe is owned by this Windows user: ' + lines.join(' / '));
+  // The link refuses a pipe whose owner isn't its token's owner (Host.NewPipe); this checks Windows agrees.
+  expect(tokenOwner && lines.includes('owner ' + tokenOwner), 'the pipe is owned as this user\'s token owns new objects: ' + lines.join(' / '));
   expect(rules.length === 2 && rules[0] === 'S-1-5-2 Deny' && rules[1] === me + ' Allow',
          'the pipe denies NETWORK first and allows only this user: ' + rules.join(', '));
   h.child.stdin.end();
