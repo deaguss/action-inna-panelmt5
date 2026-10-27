@@ -588,6 +588,9 @@ private:
          Status(perm, 2, 0);
          return;
         }
+      // What the trader saw: the plan as the last refresh drew it.
+      ENUM_ORDER_TYPE seenType = m_plan.type;
+      double seenLots = m_plan.lots;
       double seenRisk = m_plan.riskMoney;
       // The timer reloads symbol data once a second; the checks before sending use the newest.
       AiLoadSpec(_Symbol, (int)cfg.pipMode, m_spec);
@@ -604,10 +607,21 @@ private:
             Status(m_plan.err, 2, 0);
             return;
            }
+         // A pending entry the price crossed would now be the other type (a limit becomes a stop).
+         if(m_plan.type != seenType)
+           {
+            BackToPreview("Price crossed the entry: now a " + AiOrderTypeName(m_plan.type) + ". Check it, then confirm again");
+            return;
+           }
+         if(MathAbs(m_plan.lots - seenLots) > m_spec.volStep * 0.5)
+           {
+            BackToPreview("Lots changed since the preview (" + AiLotsStr(m_spec, seenLots) + " to " + AiLotsStr(m_spec, m_plan.lots) +
+                          "). Check them, then confirm again");
+            return;
+           }
          if(seenRisk > 0.0 && m_plan.riskMoney > seenRisk * 1.05 + 0.01)
            {
-            m_phase = AI_PHASE_PREVIEW;
-            Status("The risk grew since the preview. Check it and confirm again", 1, 0);
+            BackToPreview("The risk grew since the preview. Check it and confirm again");
             return;
            }
          if(m_exec.Send(m_spec, m_plan, cfg, r))
@@ -619,6 +633,15 @@ private:
             break;
         }
       Fail(r.msg);
+     }
+
+   // The order changed after the trader saw it. Its new numbers show on the next refresh, and Confirm
+   // waits until they have been on screen as long as a new preview's.
+   void              BackToPreview(const string why)
+     {
+      m_phase = AI_PHASE_PREVIEW;
+      m_previewSince = AiNowMs();
+      Status(why, 1, 0);
      }
 
    // A risk this close to the plan's counts as the plan's: moving a stop to the tick grid can shift it a little.
@@ -888,6 +911,8 @@ private:
          return;
       if(AiNowMs() - m_modSince < 300)
          return;
+      // What the card showed: the change as the last refresh drew it.
+      ENUM_ORDER_TYPE seenType = m_mod.type;
       // Fresh symbol data (the broker can change its stops and freeze levels), fresh prices and the
       // trade as the server has it now; if the trade moved, the card shows that first.
       AiLoadSpec(_Symbol, (int)cfg.pipMode, m_spec);
@@ -895,6 +920,14 @@ private:
          return;
       if(!m_mod.valid)
          return;   // the card's status line says why
+      // A pending entry the price crossed would now be the other type (a limit becomes a stop).
+      if(m_mod.type != seenType)
+        {
+         m_modStatus = "Price crossed the entry: now a " + AiOrderTypeName(m_mod.type) + ". Check it, then confirm again";
+         m_modStatusLevel = 1;
+         m_modSince = AiNowMs();
+         return;
+        }
       string perm = m_exec.PermissionProblem();
       if(perm != "")
         {

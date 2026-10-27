@@ -142,6 +142,12 @@ All notable changes to ActionInna are recorded here. The format follows
 
 ### Security
 
+- The chart panel's Confirm, and its change card's, refuse an order that became another type or
+  another lot size after the panel last drew it, as the browser panel already did. A tick between
+  the last redraw and the click could send a Buy Stop where the preview showed a Buy Limit, 0.40 lots
+  where it showed 0.50 (an SL set as a price, after the ask moved), or replace a Buy Limit by a Buy
+  Stop from a card that showed no change of type. After any refusal, Confirm waits until the new
+  numbers have been on screen for 0.3 seconds.
 - The link refuses a pipe that another Windows user made first. A pipe keeps the security of whoever
   made it, so on a shared PC that user could have connected to the link and been sent its key, and
   then served the EA themselves.

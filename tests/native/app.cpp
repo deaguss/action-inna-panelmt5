@@ -745,6 +745,67 @@ static void ScenarioPreviewAndCard()
    EXPECT(Sent() == 2 && Last().action == TRADE_ACTION_DEAL, "with the card closed, Enter confirms the preview");
   }
 
+// The price moves after the panel last drew the preview or the card, and the trader confirms before
+// the next refresh: what goes out must be the type and lots on screen, or nothing.
+static void ScenarioConfirmHoldsPreview()
+  {
+   Setup("Confirm refuses a pending order that became the other type since the preview");
+   Key('P');
+   Key('B');
+   Advance(350);
+   Refresh();
+   EXPECT(Has(TextOf("AINNA_T_ENTRY#tx"), "BUY LIMIT") && Has(TextOf("AINNA_T_ENTRY#tx"), "1.08400"),
+          "the preview shows a BUY LIMIT at 1.08400: " + TextOf("AINNA_T_ENTRY#tx"));
+   g_fake.sym.bid = 1.08370;
+   g_fake.sym.ask = 1.08390;
+   Key(13);
+   EXPECT(Sent() == 0, "nothing is sent: the price crossed the entry after the preview was drawn");
+   EXPECT(Has(PanelStatus(), "now a BUY STOP"), "the panel says what it would be now: " + PanelStatus());
+   Key(13);
+   EXPECT(Sent() == 0, "an immediate second Confirm waits until the new preview has shown");
+   Advance(350);
+   Refresh();
+   Key(13);
+   EXPECT(Sent() == 1 && Last().action == TRADE_ACTION_PENDING && Last().type == ORDER_TYPE_BUY_STOP && Near(Last().price, 1.08400),
+          "confirmed again once shown, it goes out as the BUY STOP");
+
+   Setup("Confirm refuses a market order whose lots changed since the preview");
+   Key('B');
+   Click(kP + "SLMODE#bg");
+   Advance(350);
+   Refresh();
+   g_fake.sym.bid = 1.08530;
+   g_fake.sym.ask = 1.08550;
+   Key(13);
+   EXPECT(Sent() == 0, "nothing is sent: with the SL at a price, the new ask makes it 0.40 lots, the preview said 0.50");
+   EXPECT(Has(PanelStatus(), "Lots changed") && Has(PanelStatus(), "0.50") && Has(PanelStatus(), "0.40"),
+          "the panel says the lots changed, from and to: " + PanelStatus());
+   Advance(350);
+   Refresh();
+   Key(13);
+   EXPECT(Sent() == 1 && Last().action == TRADE_ACTION_DEAL && Near(Last().volume, 0.40), "confirmed again once shown, 0.40 lots go out");
+
+   Setup("the change card refuses a pending order that became the other type since it was drawn");
+   AddOrd(201, ORDER_TYPE_BUY_LIMIT, 0.10, 1.08300, 1.08100, 1.08700);
+   Refresh();
+   Drag(Obj(201, "E"), 1.08450);
+   Advance(350);
+   Refresh();
+   EXPECT(!Has(CardStatus(), "Becomes"), "the card shows a plain change of the BUY LIMIT: " + CardStatus());
+   g_fake.sym.bid = 1.08410;
+   g_fake.sym.ask = 1.08430;
+   Click(kP + "MODOK#bg");
+   EXPECT(Sent() == 0 && g_fake.ords.size() == 1 && g_fake.ords[0].type == ORDER_TYPE_BUY_LIMIT, "nothing is removed or placed");
+   EXPECT(Has(CardStatus(), "now a BUY STOP"), "the card says what it would be now: " + CardStatus());
+   Click(kP + "MODOK#bg");
+   EXPECT(Sent() == 0, "an immediate second Confirm waits until the card has shown it");
+   Advance(350);
+   Refresh();
+   Click(kP + "MODOK#bg");
+   EXPECT(Sent() == 2 && g_fake.ords.size() == 1 && g_fake.ords[0].type == ORDER_TYPE_BUY_STOP && Near(g_fake.ords[0].price, 1.08450),
+          "confirmed again once shown, the BUY LIMIT is replaced by a BUY STOP");
+  }
+
 static void ScenarioTimeframeChange()
   {
    Setup("a timeframe change drops an open change");
@@ -1104,6 +1165,7 @@ int main(int argc, char **argv)
    ScenarioDrawOrder();
    ScenarioDragModes();
    ScenarioPreviewAndCard();
+   ScenarioConfirmHoldsPreview();
    ScenarioTimeframeChange();
    ScenarioTemplate();
    ScenarioSlippage();

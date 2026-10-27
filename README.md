@@ -330,7 +330,9 @@ A market order fills at the price the broker has when the order arrives, which c
 price in the preview. Most accounts use market execution, where MT5 ignores the "Max slippage"
 input. On instant and request execution a price that moved too far comes back as a requote, and
 ActionInna tries again at the new price, up to three times. In every mode it refuses to send an order
-whose risk grew more than 5% since the preview.
+whose risk grew more than 5% since the preview, or that would now be another order type (the price
+crossed a pending entry) or another lot size than the preview showed. The panel then shows the new
+numbers, and Confirm sends them once they have been on screen for 0.3 seconds.
 
 The order always goes out with its SL and TP. When it fills a tick or more away from the planned
 entry, the input "When a market order fills at another price" decides what happens next:
